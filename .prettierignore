@@ -1,0 +1,10 @@
+dist/
+node_modules/
+src-tauri/gen/
+src-tauri/target/
+
+# Verbatim source-of-truth docs and upstream-mirrored process templates -
+# not application source, not reformatted so they stay byte-diffable
+# against their origin (the owner's handoffs / the Forge's own templates).
+docs/product/
+templates/

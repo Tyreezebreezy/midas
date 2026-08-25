@@ -1,0 +1,245 @@
+:root {
+  font-family:
+    Inter,
+    ui-sans-serif,
+    "Segoe UI",
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+
+  /* MIDAS brand tokens - light (default). See docs/architecture for rationale. */
+  --midas-bg-deep: #eae6d9;
+  --midas-bg: #f4f1e8;
+  --midas-surface: #ffffff;
+  --midas-surface-raised: #ffffff;
+  --midas-border: #dcd6c4;
+  --midas-gold: #9c7a1e;
+  --midas-gold-soft: #b3934a;
+  --midas-text: #0b2418;
+  --midas-text-muted: #4b5c52;
+  --midas-focus: #9c7a1e;
+  --midas-positive: #15803d;
+  --midas-negative: #b91c1c;
+  --midas-warning: #b45309;
+
+  color: var(--midas-text);
+  background: var(--midas-bg);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --midas-bg-deep: #071a12;
+  --midas-bg: #0b2418;
+  --midas-surface: #102e20;
+  --midas-surface-raised: #173a29;
+  --midas-border: rgb(244 241 232 / 14%);
+  --midas-gold: #d4af37;
+  --midas-gold-soft: #bfa45a;
+  --midas-text: #f4f1e8;
+  --midas-text-muted: #aab8ae;
+  --midas-focus: #d4af37;
+  --midas-positive: #34d399;
+  --midas-negative: #f87171;
+  --midas-warning: #fb923c;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: var(--midas-bg-deep);
+}
+
+button,
+input {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 3px solid var(--midas-focus);
+  outline-offset: 2px;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  min-height: 100vh;
+  min-height: 100dvh;
+  color: var(--midas-text);
+  background: var(--midas-bg);
+}
+
+.app-header,
+footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 1.15rem clamp(1.25rem, 4vw, 3rem);
+  border-color: var(--midas-border);
+  background: var(--midas-surface);
+}
+
+.app-header {
+  border-bottom: 1px solid var(--midas-border);
+}
+
+.brand {
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--midas-gold);
+}
+
+.theme-control {
+  display: flex;
+  margin: 0;
+  padding: 0.2rem;
+  border: 1px solid var(--midas-border);
+  border-radius: 0.55rem;
+}
+
+.theme-control legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.theme-control label {
+  position: relative;
+  cursor: pointer;
+}
+
+.theme-control input {
+  position: absolute;
+  opacity: 0;
+}
+
+.theme-control span {
+  display: block;
+  min-width: 5.25rem;
+  padding: 0.55rem 0.85rem;
+  border-radius: 0.38rem;
+  color: var(--midas-text-muted);
+  text-align: center;
+}
+
+.theme-control input:checked + span {
+  color: var(--midas-text);
+  background: var(--midas-bg);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 20%);
+}
+
+.theme-control input:focus-visible + span {
+  outline: 3px solid var(--midas-focus);
+  outline-offset: 2px;
+}
+
+main {
+  display: flex;
+  align-items: center;
+  width: min(100%, 90rem);
+  margin: 0 auto;
+  padding: clamp(3rem, 10vh, 7rem) clamp(1.5rem, 9vw, 8rem);
+}
+
+.eyebrow {
+  margin: 0 0 0.75rem;
+  color: var(--midas-gold);
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+h1 {
+  max-width: 22ch;
+  margin: 0;
+  font-size: clamp(2.4rem, 5.2vw, 4.25rem);
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+}
+
+.lede {
+  max-width: 44rem;
+  margin: 1.6rem 0 0;
+  color: var(--midas-text-muted);
+  font-size: clamp(1.05rem, 2vw, 1.25rem);
+  line-height: 1.6;
+}
+
+.status-list {
+  display: grid;
+  gap: 1rem;
+  margin: 2.25rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.status-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  font-size: 1.05rem;
+}
+
+.status-list li span {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--midas-bg);
+  background: var(--midas-gold);
+  font-weight: 800;
+}
+
+footer {
+  border-top: 1px solid var(--midas-border);
+  color: var(--midas-text-muted);
+  font-size: 0.9rem;
+}
+
+@media (max-width: 640px) {
+  .app-header,
+  footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .theme-control {
+    align-self: stretch;
+  }
+
+  .theme-control label {
+    flex: 1;
+  }
+
+  .theme-control span {
+    min-width: 0;
+  }
+
+  main {
+    align-items: flex-start;
+    padding-block: 3rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

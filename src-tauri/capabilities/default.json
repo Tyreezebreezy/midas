@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Phase 0 shell exposes no Tauri commands or plugins. Persistence/file capabilities are added narrowly in later phases with a documented reason (see docs/decisions).",
+  "windows": ["main"],
+  "permissions": []
+}
