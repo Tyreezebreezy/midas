@@ -152,6 +152,17 @@ h1 {
   letter-spacing: -0.02em;
 }
 
+.section-heading {
+  margin: 2rem 0 1rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--midas-text);
+}
+
+.section-heading:first-of-type {
+  margin-top: 0;
+}
+
 .muted {
   color: var(--midas-text-muted);
 }

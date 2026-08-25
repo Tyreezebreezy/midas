@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import "./App.css";
 import AccountsPage from "./AccountsPage";
 import NeedsReviewPage from "./NeedsReviewPage";
+import RecurringPage from "./RecurringPage";
+import RulesPage from "./RulesPage";
 import TransactionsPage from "./TransactionsPage";
 import {
   parseThemePreference,
@@ -11,11 +13,13 @@ import {
 
 const themeOptions: ThemePreference[] = ["system", "light", "dark"];
 
-type Tab = "accounts" | "transactions" | "review";
+type Tab = "accounts" | "transactions" | "recurring" | "rules" | "review";
 
 const tabs: { id: Tab; label: string }[] = [
   { id: "accounts", label: "Accounts" },
   { id: "transactions", label: "Transactions" },
+  { id: "recurring", label: "Recurring & Bills" },
+  { id: "rules", label: "Rules" },
   { id: "review", label: "Needs Review" },
 ];
 
@@ -91,6 +95,8 @@ function App() {
       <main>
         {tab === "accounts" && <AccountsPage />}
         {tab === "transactions" && <TransactionsPage />}
+        {tab === "recurring" && <RecurringPage />}
+        {tab === "rules" && <RulesPage />}
         {tab === "review" && <NeedsReviewPage />}
       </main>
 

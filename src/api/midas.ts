@@ -213,3 +213,67 @@ export const needsReviewApi = {
   resolve: (id: number, action: ResolutionAction) =>
     invoke<NeedsReviewItem>("resolve_needs_review", { id, action }),
 };
+
+// --- Merchant rules ---
+export type MatchType = "exact" | "contains" | "starts_with";
+
+export interface MerchantRule {
+  id: number;
+  match_type: MatchType;
+  match_value: string;
+  account_id: number | null;
+  normalized_merchant: string | null;
+  category: string | null;
+  subcategory: string | null;
+  priority: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MerchantRuleInput {
+  match_type: MatchType;
+  match_value: string;
+  account_id: number | null;
+  normalized_merchant: string | null;
+  category: string | null;
+  subcategory: string | null;
+  priority: number;
+}
+
+export const rulesApi = {
+  list: () => invoke<MerchantRule[]>("list_rules"),
+  create: (input: MerchantRuleInput) =>
+    invoke<MerchantRule>("create_rule", { input }),
+  delete: (id: number) => invoke<void>("delete_rule", { id }),
+};
+
+// --- Recurring series / bills ---
+export type Cadence =
+  "weekly" | "biweekly" | "monthly" | "quarterly" | "annual";
+export type SeriesStatus = "proposed" | "confirmed" | "rejected";
+
+export interface RecurringSeries {
+  id: number;
+  account_id: number;
+  merchant: string;
+  cadence: Cadence;
+  expected_amount_cents: number;
+  next_expected_date: string;
+  category: string | null;
+  status: SeriesStatus;
+  created_at: string;
+  updated_at: string;
+  last_occurrence_date: string | null;
+  last_amount_cents: number | null;
+  is_price_changed: boolean;
+  is_possibly_missed: boolean;
+}
+
+export const recurringApi = {
+  list: (accountId: number | null) =>
+    invoke<RecurringSeries[]>("list_recurring", { accountId }),
+  detect: (accountId: number) =>
+    invoke<RecurringSeries[]>("detect_recurring", { accountId }),
+  confirm: (id: number) => invoke<RecurringSeries>("confirm_recurring", { id }),
+  reject: (id: number) => invoke<RecurringSeries>("reject_recurring", { id }),
+};
