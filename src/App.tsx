@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import "./App.css";
 import AccountsPage from "./AccountsPage";
+import NeedsReviewPage from "./NeedsReviewPage";
+import TransactionsPage from "./TransactionsPage";
 import {
   parseThemePreference,
   resolveTheme,
@@ -8,6 +10,14 @@ import {
 } from "./theme";
 
 const themeOptions: ThemePreference[] = ["system", "light", "dark"];
+
+type Tab = "accounts" | "transactions" | "review";
+
+const tabs: { id: Tab; label: string }[] = [
+  { id: "accounts", label: "Accounts" },
+  { id: "transactions", label: "Transactions" },
+  { id: "review", label: "Needs Review" },
+];
 
 function loadTheme(): ThemePreference {
   try {
@@ -19,6 +29,7 @@ function loadTheme(): ThemePreference {
 
 function App() {
   const [theme, setTheme] = useState(loadTheme);
+  const [tab, setTab] = useState<Tab>("accounts");
 
   useEffect(() => {
     const systemDark = window.matchMedia("(prefers-color-scheme: dark)");
@@ -63,8 +74,24 @@ function App() {
         </fieldset>
       </header>
 
+      <nav className="main-nav" aria-label="Main">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            className={t.id === tab ? "nav-tab nav-tab-active" : "nav-tab"}
+            aria-current={t.id === tab ? "page" : undefined}
+            onClick={() => setTab(t.id)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </nav>
+
       <main>
-        <AccountsPage />
+        {tab === "accounts" && <AccountsPage />}
+        {tab === "transactions" && <TransactionsPage />}
+        {tab === "review" && <NeedsReviewPage />}
       </main>
 
       <footer>

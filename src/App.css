@@ -20,6 +20,7 @@
   --midas-text-muted: #4b5c52;
   --midas-focus: #9c7a1e;
   --midas-negative: #b91c1c;
+  --midas-positive: #15803d;
 
   color: var(--midas-text);
   background: var(--midas-bg);
@@ -36,6 +37,7 @@
   --midas-text-muted: #aab8ae;
   --midas-focus: #d4af37;
   --midas-negative: #f87171;
+  --midas-positive: #34d399;
 }
 
 * {
@@ -361,6 +363,240 @@ footer {
   border-top: 1px solid var(--midas-border);
   color: var(--midas-text-muted);
   font-size: 0.9rem;
+}
+
+/* Main navigation */
+
+.main-nav {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0 clamp(1.5rem, 6vw, 4rem);
+  border-bottom: 1px solid var(--midas-border);
+  background: var(--midas-surface);
+}
+
+.nav-tab {
+  padding: 0.85rem 1rem;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--midas-text-muted);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.nav-tab-active {
+  border-bottom-color: var(--midas-gold);
+  color: var(--midas-text);
+}
+
+.amount-positive {
+  color: var(--midas-positive);
+  font-weight: 700;
+}
+
+/* Transaction filters */
+
+.filters-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.search-input {
+  flex: 1 1 16rem;
+  min-width: 12rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--midas-border);
+  border-radius: 0.45rem;
+  background: var(--midas-bg);
+  color: var(--midas-text);
+}
+
+.filters-row select {
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--midas-border);
+  border-radius: 0.45rem;
+  background: var(--midas-bg);
+  color: var(--midas-text);
+}
+
+.date-filter {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--midas-text-muted);
+  font-size: 0.85rem;
+}
+
+.date-filter input {
+  padding: 0.45rem 0.5rem;
+  border: 1px solid var(--midas-border);
+  border-radius: 0.4rem;
+  background: var(--midas-bg);
+  color: var(--midas-text);
+}
+
+/* Status badges */
+
+.badge-review,
+.badge-valid {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.badge-review {
+  color: var(--midas-bg-deep);
+  background: var(--midas-gold);
+}
+
+.badge-valid {
+  color: var(--midas-bg);
+  background: var(--midas-positive);
+}
+
+/* Amount direction radio group (transaction form) */
+
+.amount-direction {
+  gap: 0.4rem;
+}
+
+.field-legend {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--midas-text-muted);
+}
+
+.amount-direction label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 500;
+  color: var(--midas-text);
+}
+
+/* CSV import wizard */
+
+.import-dialog {
+  width: min(46rem, 94vw);
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+.import-steps {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0 0 1.5rem;
+  padding: 0;
+  list-style: none;
+  font-size: 0.8rem;
+  color: var(--midas-text-muted);
+}
+
+.import-steps li {
+  padding: 0.3rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--midas-border);
+}
+
+.import-steps li.current {
+  border-color: var(--midas-gold);
+  color: var(--midas-text);
+  font-weight: 700;
+}
+
+.mapping-row {
+  display: grid;
+  grid-template-columns: 12rem 1fr;
+  align-items: center;
+  gap: 1rem;
+}
+
+.mapping-row label {
+  color: var(--midas-text);
+  font-weight: 500;
+}
+
+.import-summary-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+  margin: 0 0 1rem;
+  padding: 0;
+  list-style: none;
+  color: var(--midas-text-muted);
+}
+
+.import-summary-counts strong {
+  color: var(--midas-text);
+}
+
+.import-preview-scroll {
+  max-height: 18rem;
+}
+
+.import-result-headline {
+  font-size: 1.1rem;
+}
+
+.force-import-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--midas-text-muted);
+  white-space: nowrap;
+}
+
+/* Needs Review */
+
+.review-list {
+  display: grid;
+  gap: 0.85rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.review-item {
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--midas-border);
+  border-radius: 0.6rem;
+  background: var(--midas-surface);
+}
+
+.review-item-resolved,
+.review-item-dismissed {
+  opacity: 0.65;
+}
+
+.review-item-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.4rem;
+}
+
+.review-item p {
+  margin: 0.3rem 0;
+}
+
+.review-source {
+  font-size: 0.85rem;
+}
+
+.review-item-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
 }
 
 @media (max-width: 640px) {

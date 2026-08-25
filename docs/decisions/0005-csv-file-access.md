@@ -6,7 +6,7 @@
 
 ## Context and problem
 
-CSV import is the first MIDAS feature needing the user to hand the app a file from disk. The owner directed inspecting the Forge's current Tauri capability conventions before granting any new file authority, and choosing the narrowest mechanism that lets MIDAS access a CSV *because the user explicitly selected it* - never arbitrary or background filesystem access.
+CSV import is the first MIDAS feature needing the user to hand the app a file from disk. The owner directed inspecting the Forge's current Tauri capability conventions before granting any new file authority, and choosing the narrowest mechanism that lets MIDAS access a CSV _because the user explicitly selected it_ - never arbitrary or background filesystem access.
 
 ## Options considered
 
@@ -16,12 +16,12 @@ CSV import is the first MIDAS feature needing the user to hand the app a file fr
 
 ## Decision
 
-Option 3. `src/CsvImport.tsx` uses a native file input; the browser handles the OS picker and the read. The parsed file's text content (and filename) are passed to a Tauri command (`stage_import`) purely for **parsing**, not for file access - Rust never touches the filesystem for CSV import at all in Phase 2. `src-tauri/capabilities/default.json` gains **zero** new permission entries.
+Option 3. `src/CsvImportWizard.tsx` uses a native file input; the browser handles the OS picker and the read. The parsed file's text content (and filename) are passed to a Tauri command (`stage_import`) purely for **parsing**, not for file access - Rust never touches the filesystem for CSV import at all in Phase 2. `src-tauri/capabilities/default.json` gains **zero** new permission entries.
 
 ## Rationale
 
 - **Established precedent in this exact ecosystem**: SIREN (`C:\Dev\siren`) already reads user-selected TXT/MD/PDF documents and has an empty `capabilities/default.json` (`"permissions": []`) and no `tauri-plugin-dialog`/`tauri-plugin-fs` dependency in its `Cargo.toml` - confirming file selection in a Forge-derived app is not expected to require a Tauri plugin at all.
-- **Narrower than the requested framing, in the requester's own favor**: the instruction asked for "the narrowest file-dialog/file-read permission necessary." The narrowest possible permission is *no permission* - Option 3 achieves the identical user experience (native OS picker, user-initiated, one file at a time) with strictly less native authority than Options 1 or 2, satisfying the goal more completely than either.
+- **Narrower than the requested framing, in the requester's own favor**: the instruction asked for "the narrowest file-dialog/file-read permission necessary." The narrowest possible permission is _no permission_ - Option 3 achieves the identical user experience (native OS picker, user-initiated, one file at a time) with strictly less native authority than Options 1 or 2, satisfying the goal more completely than either.
 - **Option 1** is safe and well-understood but still adds a real capability entry and a custom command whose `path` argument is, at the IPC boundary, just a string - reachable in principle by any frontend code, not only the picker flow (mitigated in Option 1 by an extension/size check, but that mitigation is unnecessary if Option 3 removes the native read surface entirely).
 - **Option 2** relies on a specific, less-familiar plugin-interop scoping behavior (dialog selection auto-granting temporary fs scope) that I could not verify precisely enough from documentation-independent knowledge alone to be confident the permission grant is exactly as narrow as intended rather than accidentally broader - not a risk worth taking when Option 3 sidesteps it completely.
 - CSP impact: none. The File API operates on an already-selected in-memory `File`/`Blob`; it is not a network request and is unaffected by `connect-src`/`script-src` or any other directive in MIDAS's existing narrow CSP.
@@ -39,4 +39,4 @@ Option 3. `src/CsvImport.tsx` uses a native file input; the browser handles the 
 ## Consequences and accepted tradeoffs
 
 - Rust-side `stage_import` still validates the incoming CSV text defensively (row/column sanity, size ceiling) since it is untrusted input regardless of how it arrived - this is ordinary input validation, not a capability concern.
-- If a future phase needs MIDAS to read a file *without* the user picking it in the moment (e.g., a saved "watch this folder" import), that is new authority requiring its own ADR and owner approval - not implied by this one.
+- If a future phase needs MIDAS to read a file _without_ the user picking it in the moment (e.g., a saved "watch this folder" import), that is new authority requiring its own ADR and owner approval - not implied by this one.
