@@ -26,3 +26,5 @@ Imported data is never written directly to the canonical ledger without passing 
 
 - Exact SQLite schema and migration mechanism (see `docs/decisions/` once an ADR is recorded).
 - Which Tauri capabilities (fs scope, dialog) Phase 1 needs, scoped to the exact commands that require them.
+
+Semantic status colors (positive/negative/warning) and a raised-surface token are deferred, not forgotten: add each one in the phase that first renders a signed amount or a card, so it can be picked against real content instead of guessed in the abstract.
