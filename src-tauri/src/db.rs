@@ -5,6 +5,7 @@ use std::sync::Mutex;
 const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0001_initial.sql"),
     include_str!("../migrations/0002_transactions.sql"),
+    include_str!("../migrations/0003_rules_and_recurring.sql"),
 ];
 
 /// Tauri-managed state wrapping the single app-wide SQLite connection.

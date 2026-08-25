@@ -18,6 +18,7 @@ use tauri::State;
 use crate::accounts;
 use crate::db::DbState;
 use crate::money;
+use crate::rules::{self, MerchantRule};
 use crate::transactions::TransactionType;
 
 const MAX_CSV_BYTES: usize = 20 * 1024 * 1024; // 20MB - generous for a statement, bounded against pathological input.
@@ -174,6 +175,7 @@ pub struct ProposedTransaction {
     pub raw_description: String,
     pub merchant: String,
     pub category: Option<String>,
+    pub subcategory: Option<String>,
     pub source_row_hash: String,
 }
 
@@ -264,6 +266,7 @@ fn build_staging_rows(
     raw_rows: &[HashMap<String, String>],
     mapping: &ColumnMapping,
     ledger: &ExistingLedger,
+    merchant_rules: &[MerchantRule],
 ) -> StagingResult {
     let _ = headers;
     let mut rows = Vec::with_capacity(raw_rows.len());
@@ -335,7 +338,7 @@ fn build_staging_rows(
                 .ok()
         };
 
-        let category = mapping
+        let csv_category = mapping
             .category_column
             .as_deref()
             .and_then(|c| raw.get(c))
@@ -344,7 +347,21 @@ fn build_staging_rows(
 
         let (status, proposed, duplicate_of_transaction_id) = match (date, description, amount) {
             (Some(date), Some(description), Some(amount_cents)) => {
-                let merchant = description.clone();
+                // Rule hierarchy (product handoff section 8): an existing
+                // user rule outranks whatever category text the statement
+                // itself happened to export - a rule reflects the owner's
+                // own deliberate correction, a CSV category column is just
+                // upstream source data.
+                let rule_match = rules::best_match(merchant_rules, &description);
+                let merchant = rule_match
+                    .as_ref()
+                    .and_then(|m| m.merchant.clone())
+                    .unwrap_or_else(|| description.clone());
+                let category = rule_match
+                    .as_ref()
+                    .and_then(|m| m.category.clone())
+                    .or(csv_category);
+                let subcategory = rule_match.and_then(|m| m.subcategory);
                 let hash = row_hash(account_id, &date, amount_cents, &description);
                 let transaction_type = default_transaction_type(amount_cents, is_liability);
 
@@ -369,6 +386,7 @@ fn build_staging_rows(
                             raw_description: description,
                             merchant,
                             category,
+                            subcategory: subcategory.clone(),
                             source_row_hash: hash,
                         }),
                         candidates.first().copied(),
@@ -385,6 +403,7 @@ fn build_staging_rows(
                             raw_description: description,
                             merchant,
                             category,
+                            subcategory: subcategory.clone(),
                             source_row_hash: hash,
                         }),
                         None,
@@ -431,6 +450,7 @@ pub fn stage(
         .is_liability();
     let (headers, rows) = read_csv(csv_content)?;
     let ledger = load_existing_ledger(conn, account_id)?;
+    let merchant_rules = rules::relevant_rules(conn, account_id).map_err(|e| e.to_string())?;
     Ok(build_staging_rows(
         account_id,
         is_liability,
@@ -438,6 +458,7 @@ pub fn stage(
         &rows,
         mapping,
         &ledger,
+        &merchant_rules,
     ))
 }
 
@@ -475,7 +496,16 @@ pub fn commit(
         .is_liability();
     let (headers, rows) = read_csv(csv_content)?;
     let ledger = load_existing_ledger(conn, account_id)?;
-    let staged = build_staging_rows(account_id, is_liability, &headers, &rows, mapping, &ledger);
+    let merchant_rules = rules::relevant_rules(conn, account_id).map_err(|e| e.to_string())?;
+    let staged = build_staging_rows(
+        account_id,
+        is_liability,
+        &headers,
+        &rows,
+        mapping,
+        &ledger,
+        &merchant_rules,
+    );
     let force_import = force_import_row_indices;
 
     let file_hash = {
@@ -543,8 +573,8 @@ pub fn commit(
                         .query_row(
                             "INSERT INTO transactions (
                                 account_id, transaction_date, posted_date, amount_cents, transaction_type,
-                                raw_description, merchant, category, source_import_id, source_row_hash
-                            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) RETURNING id",
+                                raw_description, merchant, category, subcategory, source_import_id, source_row_hash
+                            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) RETURNING id",
                             params![
                                 account_id,
                                 proposed.transaction_date,
@@ -554,6 +584,7 @@ pub fn commit(
                                 proposed.raw_description,
                                 proposed.merchant,
                                 proposed.category,
+                                proposed.subcategory,
                                 import_id,
                                 proposed.source_row_hash,
                             ],
@@ -640,6 +671,7 @@ fn insert_review_item(
 mod tests {
     use super::*;
     use crate::accounts::{self, AccountInput, AccountType};
+    use crate::rules::{MatchType, MerchantRuleInput};
 
     fn test_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -647,6 +679,8 @@ mod tests {
         conn.execute_batch(include_str!("../migrations/0001_initial.sql"))
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0002_transactions.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../migrations/0003_rules_and_recurring.sql"))
             .unwrap();
         conn
     }
@@ -768,6 +802,65 @@ mod tests {
         assert_eq!(
             card_result.rows[1].proposed.as_ref().unwrap().amount_cents,
             -1000
+        );
+    }
+
+    #[test]
+    fn a_matching_rule_normalizes_merchant_and_category_during_staging() {
+        let conn = test_conn();
+        let account_id = make_account(&conn, AccountType::Checking);
+        rules::create(
+            &conn,
+            &MerchantRuleInput {
+                match_type: MatchType::Contains,
+                match_value: "coffee shop".to_string(),
+                account_id: None,
+                normalized_merchant: Some("Coffee Shop".to_string()),
+                category: Some("Dining & Restaurants".to_string()),
+                subcategory: None,
+                priority: 0,
+            },
+        )
+        .unwrap();
+
+        let csv = "Date,Description,Amount\n2026-03-01,SQ *COFFEE SHOP 123 MIAMI FL,-4.50\n";
+        let result = stage(&conn, account_id, csv, &signed_amount_mapping()).unwrap();
+        let proposed = result.rows[0].proposed.as_ref().unwrap();
+        assert_eq!(proposed.merchant, "Coffee Shop");
+        assert_eq!(proposed.category.as_deref(), Some("Dining & Restaurants"));
+        assert_eq!(
+            proposed.raw_description, "SQ *COFFEE SHOP 123 MIAMI FL",
+            "original text is preserved"
+        );
+    }
+
+    #[test]
+    fn a_rule_category_overrides_the_csvs_own_category_column() {
+        let conn = test_conn();
+        let account_id = make_account(&conn, AccountType::Checking);
+        rules::create(
+            &conn,
+            &MerchantRuleInput {
+                match_type: MatchType::Exact,
+                match_value: "netflix".to_string(),
+                account_id: None,
+                normalized_merchant: None,
+                category: Some("Subscriptions".to_string()),
+                subcategory: None,
+                priority: 0,
+            },
+        )
+        .unwrap();
+
+        let mut mapping = signed_amount_mapping();
+        mapping.category_column = Some("Category".to_string());
+        let csv = "Date,Description,Amount,Category\n2026-03-01,Netflix,-15.49,Entertainment\n";
+        let result = stage(&conn, account_id, csv, &mapping).unwrap();
+        let proposed = result.rows[0].proposed.as_ref().unwrap();
+        assert_eq!(
+            proposed.category.as_deref(),
+            Some("Subscriptions"),
+            "the rule wins over the CSV's own category"
         );
     }
 

@@ -3,6 +3,8 @@ mod db;
 mod import;
 mod money;
 mod needs_review;
+mod recurring;
+mod rules;
 mod settings;
 mod transactions;
 
@@ -37,6 +39,13 @@ pub fn run() {
             import::commit_import,
             needs_review::list_needs_review,
             needs_review::resolve_needs_review,
+            rules::list_rules,
+            rules::create_rule,
+            rules::delete_rule,
+            recurring::list_recurring,
+            recurring::detect_recurring,
+            recurring::confirm_recurring,
+            recurring::reject_recurring,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Tauri application");
