@@ -43,6 +43,12 @@ try {
     & cargo check --locked --manifest-path 'src-tauri\Cargo.toml'
     if ($LASTEXITCODE -ne 0) { throw 'Rust build check failed.' }
 
+    & cargo clippy --locked --manifest-path 'src-tauri\Cargo.toml' --all-targets -- -D warnings
+    if ($LASTEXITCODE -ne 0) { throw 'Rust clippy check failed.' }
+
+    & cargo test --locked --manifest-path 'src-tauri\Cargo.toml'
+    if ($LASTEXITCODE -ne 0) { throw 'Rust test suite failed.' }
+
     & cargo audit --file 'src-tauri\Cargo.lock'
     if ($LASTEXITCODE -ne 0) { throw 'cargo-audit found an unresolved advisory.' }
 }

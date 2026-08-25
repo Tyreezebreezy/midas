@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import "./App.css";
+import AccountsPage from "./AccountsPage";
 import {
   parseThemePreference,
   resolveTheme,
@@ -63,29 +64,7 @@ function App() {
       </header>
 
       <main>
-        <section aria-labelledby="ready-heading">
-          <p className="eyebrow">
-            Private &middot; Local-first &middot; Explainable
-          </p>
-          <h1 id="ready-heading">Where do you stand financially?</h1>
-          <p className="lede">
-            MIDAS is your local personal finance command center. This is the
-            foundation shell &mdash; accounts, imports, and the dashboard arrive
-            in the phases ahead.
-          </p>
-          <ul className="status-list">
-            {[
-              "Local-first: no cloud account required",
-              "Theme preference saved on this device",
-              "No network authority",
-            ].map((item) => (
-              <li key={item}>
-                <span aria-hidden="true">✓</span>
-                {item}
-              </li>
-            ))}
-          </ul>
-        </section>
+        <AccountsPage />
       </main>
 
       <footer>
