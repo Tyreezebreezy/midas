@@ -59,6 +59,7 @@ Stand up an independently runnable MIDAS shell at `C:\Dev\midas`, reusing The Fo
 - `cargo check --manifest-path src-tauri\Cargo.toml` (first run, generates `Cargo.lock`) — exit 0, finished in 1m33s.
 - `powershell -ExecutionPolicy Bypass -File scripts\validate.ps1` — `MIDAS_VALIDATION=PASS`.
 - Browser check against `npm run dev` (localhost:1420): title "MIDAS"; console shows only Vite HMR connect + the standard React DevTools notice, no errors/warnings; accessibility tree shows `banner` (theme radios), `main`/`region` (heading + copy + status list), `contentinfo` (footer) — correct semantic landmarks; clicking Dark sets `documentElement.dataset.theme = "dark"`, persists `midas-theme=dark` to localStorage, and resolves body background to `rgb(7, 26, 18)` (#071A12); clicking Light resolves background to `rgb(234, 230, 217)` (#EAE6D9) and `.brand` color to `rgb(156, 122, 30)` (#9C7A1E) — both match the intended design tokens exactly.
+- Native launch: `npm run tauri dev` compiled the full Tauri 2 dependency graph (355 crates) from clean with zero errors in 1m35s and ran `target\debug\midas.exe`. Confirmed via `Get-Process`: PID alive with `MainWindowTitle='MIDAS'` - a real WebView2-backed window opened on this machine (WebView2 runtime 151.0.4129.101 confirmed present). Process stopped cleanly afterward; no leftover `midas.exe`.
 
 ## Test strategy
 
