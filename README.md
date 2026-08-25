@@ -26,7 +26,7 @@ Run the desktop app with `npm.cmd run tauri dev`. Build the installer only insid
 
 ## Repository map
 
-- `constitution/`: non-negotiable MIDAS rules (adapted from The Forge).
+- `constitution/`: non-negotiable MIDAS rules (adapted from App Foundry governance conventions).
 - `standards/`: security, testing, accessibility, dependencies, and release requirements.
 - `templates/`: reusable phase, ADR, handoff, QA, owner-gate, and release records.
 - `gates/`: repeatable lifecycle checklists.
@@ -38,6 +38,6 @@ Run the desktop app with `npm.cmd run tauri dev`. Build the installer only insid
 
 ## Origin
 
-MIDAS reuses `the-forge`'s `tauri-react-windows` golden path as a read-only reference (Tauri 2 + React + TypeScript + Vite, System/Light/Dark theming, narrow production CSP, no exposed Tauri commands by default, NSIS packaging, deterministic checks). MIDAS does not depend on The Forge, SERANA, ICARUS, Claude Code, or Codex at runtime.
+MIDAS reuses `the-forge`'s `tauri-react-windows` golden path as a read-only reference (Tauri 2 + React + TypeScript + Vite, System/Light/Dark theming, narrow production CSP, no exposed Tauri commands by default, NSIS packaging, deterministic checks). MIDAS also follows the App Foundry development methodology (the standards/gates/governance discipline behind `constitution/`, `standards/`, and `gates/`) without depending on it at runtime either. The Forge is the code/tooling side of this; App Foundry is the methodology side — MIDAS does not depend on The Forge, App Foundry, SERANA, ICARUS, Claude Code, or Codex at runtime.
 
-No remote is configured yet. The intended private Gitea remote is `[private-git-server]`.
+`origin` is configured to the private Gitea remote at `[private-git-server]`. As of Phase 1 start, pushing is blocked by an infrastructure issue on that host (see `PROJECT_STATE.md` and ADR-0002) — local commits are ahead of the remote until it's reachable again.

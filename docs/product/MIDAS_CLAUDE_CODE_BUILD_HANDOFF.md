@@ -1,3 +1,5 @@
+> **Owner correction (2026-08-25, recorded in ADR-0002):** Section 1 below states "The Forge is the current name of the former App Foundry." That collapses two distinct things. For this project: **The Forge** is the reusable application code/tooling/golden-path; **App Foundry** is the broader development methodology, standards, governance, gates, and workflow. MIDAS uses both and depends on neither at runtime. The rest of this document is preserved verbatim as originally handed off; this note is the correction, not an edit to the historical text below.
+
 # MIDAS — Claude Code Build Handoff
 **Audience:** Claude Code  
 **Purpose:** Build MIDAS using the existing Forge workflow and standards  

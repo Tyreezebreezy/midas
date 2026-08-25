@@ -42,6 +42,9 @@ try {
 
     & cargo check --locked --manifest-path 'src-tauri\Cargo.toml'
     if ($LASTEXITCODE -ne 0) { throw 'Rust build check failed.' }
+
+    & cargo audit --file 'src-tauri\Cargo.lock'
+    if ($LASTEXITCODE -ne 0) { throw 'cargo-audit found an unresolved advisory.' }
 }
 finally {
     Pop-Location

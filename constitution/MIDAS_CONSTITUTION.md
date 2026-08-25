@@ -1,6 +1,6 @@
 # MIDAS Constitution v1
 
-Adapted from The Forge Constitution v1 (`the-forge\constitution\FORGE_CONSTITUTION.md`). MIDAS is an independent application and does not depend on The Forge at runtime; these principles are reused as process discipline, not as a code dependency.
+Adapted from App Foundry governance conventions, versioned alongside the Forge golden-path code at `the-forge\constitution\FORGE_CONSTITUTION.md`. The Forge is the reusable application code/tooling/golden-path; App Foundry is the broader development methodology, standards, governance, and gates. MIDAS uses both and does not depend on either at runtime; these principles are reused as process discipline, not as a code dependency.
 
 ## Non-negotiable principles
 
