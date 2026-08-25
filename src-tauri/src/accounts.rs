@@ -53,6 +53,28 @@ impl AccountType {
             }
         })
     }
+
+    /// Whether this account's balance represents money owed rather than
+    /// money held - see ADR-0004 (transaction sign convention).
+    pub fn is_liability(self) -> bool {
+        matches!(
+            self,
+            AccountType::CreditCard | AccountType::Loan | AccountType::OtherLiability
+        )
+    }
+}
+
+/// Narrow lookup for callers (the import pipeline) that only need to know
+/// an account's type, not its full record.
+pub fn account_type_of(conn: &Connection, id: i64) -> Result<AccountType, AccountError> {
+    conn.query_row(
+        "SELECT account_type FROM accounts WHERE id = ?1",
+        params![id],
+        |row| row.get::<_, String>(0),
+    )
+    .optional()?
+    .ok_or(AccountError::NotFound(id))
+    .and_then(|s| AccountType::from_sql_str(&s).map_err(AccountError::from))
 }
 
 #[derive(Debug, Clone, Serialize)]

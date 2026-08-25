@@ -2,7 +2,10 @@ use rusqlite::Connection;
 use std::path::Path;
 use std::sync::Mutex;
 
-const MIGRATIONS: &[&str] = &[include_str!("../migrations/0001_initial.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("../migrations/0001_initial.sql"),
+    include_str!("../migrations/0002_transactions.sql"),
+];
 
 /// Tauri-managed state wrapping the single app-wide SQLite connection.
 /// One mutex-guarded connection is deliberately simple: MIDAS is a local,

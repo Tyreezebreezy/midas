@@ -1,6 +1,10 @@
 mod accounts;
 mod db;
+mod import;
+mod money;
+mod needs_review;
 mod settings;
+mod transactions;
 
 use db::DbState;
 use std::sync::Mutex;
@@ -23,6 +27,16 @@ pub fn run() {
             accounts::set_account_archived,
             settings::get_setting,
             settings::set_setting,
+            transactions::list_transactions,
+            transactions::create_transaction,
+            transactions::update_transaction,
+            transactions::set_transaction_archived,
+            transactions::delete_transaction,
+            import::preview_csv,
+            import::stage_import,
+            import::commit_import,
+            needs_review::list_needs_review,
+            needs_review::resolve_needs_review,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Tauri application");
