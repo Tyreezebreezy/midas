@@ -83,6 +83,9 @@ pub struct Account {
     pub name: String,
     pub institution: Option<String>,
     pub account_type: AccountType,
+    /// Computed live from `SUM(transactions.amount_cents)`, never stored -
+    /// see ADR-0007. To set or correct it, use
+    /// `accounting::reconcile_balance`, not this struct.
     pub balance_cents: i64,
     pub include_in_net_worth: bool,
     pub notes: Option<String>,
@@ -97,7 +100,6 @@ pub struct AccountInput {
     pub name: String,
     pub institution: Option<String>,
     pub account_type: AccountType,
-    pub balance_cents: i64,
     pub include_in_net_worth: bool,
     pub notes: Option<String>,
 }
@@ -150,19 +152,25 @@ fn validate(input: &AccountInput) -> Result<(), AccountError> {
     Ok(())
 }
 
-const COLUMNS: &str = "id, name, institution, account_type, balance_cents, include_in_net_worth, notes, is_archived, last_synced_at, created_at, updated_at";
+// balance_cents is a correlated subquery, not a stored column (ADR-0007) -
+// aliased so row_to_account's `row.get("balance_cents")` is unchanged.
+const SELECT_ACCOUNT: &str = "SELECT
+    id, name, institution, account_type,
+    COALESCE((SELECT SUM(amount_cents) FROM transactions
+              WHERE transactions.account_id = accounts.id AND transactions.is_archived = 0), 0) AS balance_cents,
+    include_in_net_worth, notes, is_archived, last_synced_at, created_at, updated_at
+    FROM accounts";
 
 pub fn create(conn: &Connection, input: &AccountInput) -> Result<Account, AccountError> {
     validate(input)?;
     let id = conn.query_row(
-        "INSERT INTO accounts (name, institution, account_type, balance_cents, include_in_net_worth, notes)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        "INSERT INTO accounts (name, institution, account_type, include_in_net_worth, notes)
+         VALUES (?1, ?2, ?3, ?4, ?5)
          RETURNING id",
         params![
             input.name.trim(),
             input.institution,
             input.account_type.as_sql_str(),
-            input.balance_cents,
             input.include_in_net_worth as i64,
             input.notes,
         ],
@@ -171,9 +179,13 @@ pub fn create(conn: &Connection, input: &AccountInput) -> Result<Account, Accoun
     get(conn, id)?.ok_or(AccountError::NotFound(id))
 }
 
-fn get(conn: &Connection, id: i64) -> Result<Option<Account>, AccountError> {
+/// Fetches one account with its live-computed balance. `pub` for
+/// cross-module callers that need a full `Account` (e.g.
+/// `accounting::reconcile_balance`) - narrower lookups should use
+/// `account_type_of` instead of pulling the whole record.
+pub fn get(conn: &Connection, id: i64) -> Result<Option<Account>, AccountError> {
     conn.query_row(
-        &format!("SELECT {COLUMNS} FROM accounts WHERE id = ?1"),
+        &format!("{SELECT_ACCOUNT} WHERE id = ?1"),
         params![id],
         row_to_account,
     )
@@ -183,9 +195,9 @@ fn get(conn: &Connection, id: i64) -> Result<Option<Account>, AccountError> {
 
 pub fn list(conn: &Connection, include_archived: bool) -> Result<Vec<Account>, AccountError> {
     let sql = if include_archived {
-        format!("SELECT {COLUMNS} FROM accounts ORDER BY is_archived, name COLLATE NOCASE")
+        format!("{SELECT_ACCOUNT} ORDER BY is_archived, name COLLATE NOCASE")
     } else {
-        format!("SELECT {COLUMNS} FROM accounts WHERE is_archived = 0 ORDER BY name COLLATE NOCASE")
+        format!("{SELECT_ACCOUNT} WHERE is_archived = 0 ORDER BY name COLLATE NOCASE")
     };
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([], row_to_account)?;
@@ -197,14 +209,13 @@ pub fn update(conn: &Connection, id: i64, input: &AccountInput) -> Result<Accoun
     validate(input)?;
     let affected = conn.execute(
         "UPDATE accounts SET
-            name = ?1, institution = ?2, account_type = ?3, balance_cents = ?4,
-            include_in_net_worth = ?5, notes = ?6, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-         WHERE id = ?7",
+            name = ?1, institution = ?2, account_type = ?3,
+            include_in_net_worth = ?4, notes = ?5, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         WHERE id = ?6",
         params![
             input.name.trim(),
             input.institution,
             input.account_type.as_sql_str(),
-            input.balance_cents,
             input.include_in_net_worth as i64,
             input.notes,
             id,
@@ -265,10 +276,18 @@ pub fn set_account_archived(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transactions::{self, TransactionInput, TransactionType};
 
     fn test_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
         conn.execute_batch(include_str!("../migrations/0001_initial.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../migrations/0002_transactions.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../migrations/0003_rules_and_recurring.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../migrations/0004_accounting_boundary.sql"))
             .unwrap();
         conn
     }
@@ -278,7 +297,6 @@ mod tests {
             name: "Everyday Checking".to_string(),
             institution: Some("Test Credit Union".to_string()),
             account_type: AccountType::Checking,
-            balance_cents: 123_456,
             include_in_net_worth: true,
             notes: None,
         }
@@ -291,13 +309,70 @@ mod tests {
         assert_eq!(created.name, "Everyday Checking");
         assert_eq!(created.institution.as_deref(), Some("Test Credit Union"));
         assert_eq!(created.account_type, AccountType::Checking);
-        assert_eq!(created.balance_cents, 123_456);
+        assert_eq!(
+            created.balance_cents, 0,
+            "a new account with no transactions has a $0 computed balance"
+        );
         assert!(created.include_in_net_worth);
         assert!(!created.is_archived);
 
         let fetched = get(&conn, created.id).unwrap().unwrap();
         assert_eq!(fetched.id, created.id);
         assert_eq!(fetched.updated_at, created.updated_at);
+    }
+
+    #[test]
+    fn balance_is_computed_live_from_transactions_not_stored() {
+        let conn = test_conn();
+        let account = create(&conn, &sample_input()).unwrap();
+        assert_eq!(get(&conn, account.id).unwrap().unwrap().balance_cents, 0);
+
+        transactions::create(
+            &conn,
+            &TransactionInput {
+                account_id: account.id,
+                transaction_date: "2026-03-01".to_string(),
+                posted_date: None,
+                amount_cents: -2500,
+                transaction_type: TransactionType::Purchase,
+                raw_description: "Test purchase".to_string(),
+                merchant: None,
+                category: None,
+                subcategory: None,
+                notes: None,
+                tags: None,
+                is_pending: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            get(&conn, account.id).unwrap().unwrap().balance_cents,
+            -2500
+        );
+
+        transactions::create(
+            &conn,
+            &TransactionInput {
+                account_id: account.id,
+                transaction_date: "2026-03-02".to_string(),
+                posted_date: None,
+                amount_cents: 1000,
+                transaction_type: TransactionType::Income,
+                raw_description: "Test income".to_string(),
+                merchant: None,
+                category: None,
+                subcategory: None,
+                notes: None,
+                tags: None,
+                is_pending: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            list(&conn, false).unwrap()[0].balance_cents,
+            -1500,
+            "list() must reflect the same live computation as get()"
+        );
     }
 
     #[test]
@@ -367,12 +442,10 @@ mod tests {
 
         let mut changed = sample_input();
         changed.name = "Renamed Checking".to_string();
-        changed.balance_cents = 999;
         changed.include_in_net_worth = false;
         let updated = update(&conn, created.id, &changed).unwrap();
 
         assert_eq!(updated.name, "Renamed Checking");
-        assert_eq!(updated.balance_cents, 999);
         assert!(!updated.include_in_net_worth);
     }
 

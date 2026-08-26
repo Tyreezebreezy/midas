@@ -580,7 +580,7 @@ pub fn commit(
                                 proposed.transaction_date,
                                 proposed.posted_date,
                                 proposed.amount_cents,
-                                type_sql_str(proposed.transaction_type),
+                                proposed.transaction_type.as_sql_str(),
                                 proposed.raw_description,
                                 proposed.merchant,
                                 proposed.category,
@@ -637,15 +637,6 @@ pub fn commit_import(
     )
 }
 
-fn type_sql_str(t: TransactionType) -> &'static str {
-    match t {
-        TransactionType::Purchase => "purchase",
-        TransactionType::Income => "income",
-        TransactionType::Transfer => "transfer",
-        TransactionType::Refund => "refund",
-    }
-}
-
 fn insert_review_item(
     conn: &Connection,
     issue_type: &str,
@@ -682,6 +673,8 @@ mod tests {
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0003_rules_and_recurring.sql"))
             .unwrap();
+        conn.execute_batch(include_str!("../migrations/0004_accounting_boundary.sql"))
+            .unwrap();
         conn
     }
 
@@ -692,7 +685,6 @@ mod tests {
                 name: "Test Account".to_string(),
                 institution: None,
                 account_type,
-                balance_cents: 0,
                 include_in_net_worth: true,
                 notes: None,
             },

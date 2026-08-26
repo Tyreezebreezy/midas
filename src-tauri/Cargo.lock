@@ -1901,6 +1901,7 @@ dependencies = [
 name = "midas"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "csv",
  "rusqlite",
  "serde",

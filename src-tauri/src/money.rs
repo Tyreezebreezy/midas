@@ -118,32 +118,6 @@ pub fn combine_debit_credit(
     }
 }
 
-fn is_leap_year(year: i32) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
-}
-
-fn days_in_month(year: i32, month: u32) -> u32 {
-    match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 => {
-            if is_leap_year(year) {
-                29
-            } else {
-                28
-            }
-        }
-        _ => 0,
-    }
-}
-
-fn valid_calendar_date(year: i32, month: u32, day: u32) -> bool {
-    (1900..=2100).contains(&year)
-        && (1..=12).contains(&month)
-        && day >= 1
-        && day <= days_in_month(year, month)
-}
-
 /// Parses a constrained, deterministic set of common US statement date
 /// formats into ISO `YYYY-MM-DD`: `YYYY-MM-DD`, `MM/DD/YYYY`, `MM/DD/YY`
 /// (assumed 20YY), and `MM-DD-YYYY`. Anything else - including any format
@@ -187,7 +161,7 @@ pub fn parse_date(raw: &str) -> Result<String, String> {
         (year, month, day)
     };
 
-    if !valid_calendar_date(year, month, day) {
+    if !crate::dates::is_valid_calendar_date(year, month, day) {
         return Err(format!("'{raw}' is not a valid calendar date."));
     }
     Ok(format!("{year:04}-{month:02}-{day:02}"))

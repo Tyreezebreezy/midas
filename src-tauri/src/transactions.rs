@@ -12,15 +12,22 @@ pub enum TransactionType {
     Income,
     Transfer,
     Refund,
+    /// A structural anchor, not a real-world event - see ADR-0007. Created
+    /// only by `accounting::reconcile_balance`, never user-selectable in the
+    /// manual transaction form (deliberately absent from the frontend's
+    /// `TRANSACTION_TYPES` list) and never spending/income (see
+    /// `accounting::spending_effect`).
+    OpeningBalance,
 }
 
 impl TransactionType {
-    fn as_sql_str(self) -> &'static str {
+    pub(crate) fn as_sql_str(self) -> &'static str {
         match self {
             TransactionType::Purchase => "purchase",
             TransactionType::Income => "income",
             TransactionType::Transfer => "transfer",
             TransactionType::Refund => "refund",
+            TransactionType::OpeningBalance => "opening_balance",
         }
     }
 
@@ -30,6 +37,7 @@ impl TransactionType {
             "income" => TransactionType::Income,
             "transfer" => TransactionType::Transfer,
             "refund" => TransactionType::Refund,
+            "opening_balance" => TransactionType::OpeningBalance,
             other => {
                 return Err(rusqlite::Error::InvalidColumnType(
                     0,
@@ -426,6 +434,10 @@ mod tests {
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0002_transactions.sql"))
             .unwrap();
+        conn.execute_batch(include_str!("../migrations/0003_rules_and_recurring.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../migrations/0004_accounting_boundary.sql"))
+            .unwrap();
         conn
     }
 
@@ -436,7 +448,6 @@ mod tests {
                 name: "Test Account".to_string(),
                 institution: None,
                 account_type,
-                balance_cents: 0,
                 include_in_net_worth: true,
                 notes: None,
             },

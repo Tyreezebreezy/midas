@@ -1,4 +1,6 @@
+mod accounting;
 mod accounts;
+mod dates;
 mod db;
 mod import;
 mod money;
@@ -46,6 +48,9 @@ pub fn run() {
             recurring::detect_recurring,
             recurring::confirm_recurring,
             recurring::reject_recurring,
+            accounting::reconcile_account_balance,
+            accounting::get_net_worth,
+            accounting::get_total_spending,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Tauri application");

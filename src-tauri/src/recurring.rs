@@ -78,54 +78,7 @@ impl Cadence {
     }
 }
 
-/// Days since 1970-01-01 for a Gregorian calendar date - the standard
-/// "days_from_civil" algorithm (Howard Hinnant), correct for any proleptic
-/// Gregorian date. Hand-rolled deliberately: this one calculation doesn't
-/// justify a date/time dependency (see ADR-0006).
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    let y = if month <= 2 { year - 1 } else { year };
-    let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = y - era * 400; // [0, 399]
-    let mp = (month + 9) % 12; // [0, 11]
-    let doy = (153 * mp + 2) / 5 + day - 1; // [0, 365]
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // [0, 146096]
-    era * 146097 + doe - 719468
-}
-
-fn parse_iso_date(date: &str) -> (i64, i64, i64) {
-    let year: i64 = date[0..4].parse().unwrap_or(1970);
-    let month: i64 = date[5..7].parse().unwrap_or(1);
-    let day: i64 = date[8..10].parse().unwrap_or(1);
-    (year, month, day)
-}
-
-fn days_between(earlier: &str, later: &str) -> i64 {
-    let (ey, em, ed) = parse_iso_date(earlier);
-    let (ly, lm, ld) = parse_iso_date(later);
-    days_from_civil(ly, lm, ld) - days_from_civil(ey, em, ed)
-}
-
-fn add_days(date: &str, days: i64) -> String {
-    let (y, m, d) = parse_iso_date(date);
-    let epoch_day = days_from_civil(y, m, d) + days;
-    civil_from_days(epoch_day)
-}
-
-/// Inverse of `days_from_civil` (same source algorithm), used only to turn
-/// a computed "next expected" day-count back into an ISO date string.
-fn civil_from_days(z: i64) -> String {
-    let z = z + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = z - era * 146097; // [0, 146096]
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; // [0, 399]
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
-    let mp = (5 * doy + 2) / 153; // [0, 11]
-    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
-    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
-    let y = if m <= 2 { y + 1 } else { y };
-    format!("{y:04}-{m:02}-{d:02}")
-}
+use crate::dates::{add_days, days_between};
 
 fn amount_tolerance(reference_cents: i64) -> i64 {
     (reference_cents.abs() / 5).max(200) // 20% of magnitude, or $2.00, whichever is larger
@@ -443,6 +396,8 @@ mod tests {
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0003_rules_and_recurring.sql"))
             .unwrap();
+        conn.execute_batch(include_str!("../migrations/0004_accounting_boundary.sql"))
+            .unwrap();
         conn
     }
 
@@ -453,7 +408,6 @@ mod tests {
                 name: "Test".to_string(),
                 institution: None,
                 account_type: AccountType::Checking,
-                balance_cents: 0,
                 include_in_net_worth: true,
                 notes: None,
             },
@@ -481,23 +435,6 @@ mod tests {
             },
         )
         .unwrap();
-    }
-
-    #[test]
-    fn days_between_matches_known_reference_points() {
-        assert_eq!(days_between("1970-01-01", "1970-01-01"), 0);
-        assert_eq!(days_between("1970-01-01", "1970-01-02"), 1);
-        assert_eq!(days_between("2026-01-01", "2026-02-01"), 31);
-        assert_eq!(days_between("2024-02-28", "2024-03-01"), 2); // 2024 is a leap year
-        assert_eq!(days_between("2023-02-28", "2023-03-01"), 1); // 2023 is not
-    }
-
-    #[test]
-    fn add_days_round_trips_with_days_between() {
-        let start = "2026-01-15";
-        let result = add_days(start, 30);
-        assert_eq!(result, "2026-02-14");
-        assert_eq!(days_between(start, &result), 30);
     }
 
     #[test]

@@ -271,6 +271,8 @@ mod tests {
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0003_rules_and_recurring.sql"))
             .unwrap();
+        conn.execute_batch(include_str!("../migrations/0004_accounting_boundary.sql"))
+            .unwrap();
         conn
     }
 
@@ -281,7 +283,6 @@ mod tests {
                 name: "Test".to_string(),
                 institution: None,
                 account_type: AccountType::Checking,
-                balance_cents: 0,
                 include_in_net_worth: true,
                 notes: None,
             },
