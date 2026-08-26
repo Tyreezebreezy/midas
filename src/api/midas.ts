@@ -296,3 +296,34 @@ export const accountingApi = {
   getTotalSpending: (filter: TransactionFilter) =>
     invoke<number>("get_total_spending", { filter }),
 };
+
+// --- Budgets (Phase 4B) ---
+export type BudgetClassification = "fixed" | "flexible";
+export type BudgetStatus = "under" | "near" | "over";
+
+export interface Budget {
+  id: number;
+  category: string;
+  month: string;
+  planned_amount_cents: number;
+  classification: BudgetClassification;
+  created_at: string;
+  updated_at: string;
+  actual_amount_cents: number;
+  status: BudgetStatus;
+}
+
+export interface BudgetInput {
+  category: string;
+  month: string;
+  planned_amount_cents: number;
+  classification: BudgetClassification;
+}
+
+export const budgetsApi = {
+  list: (month: string) => invoke<Budget[]>("list_budgets", { month }),
+  create: (input: BudgetInput) => invoke<Budget>("create_budget", { input }),
+  update: (id: number, input: BudgetInput) =>
+    invoke<Budget>("update_budget", { id, input }),
+  delete: (id: number) => invoke<void>("delete_budget", { id }),
+};
