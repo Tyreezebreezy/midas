@@ -54,6 +54,7 @@ pub fn run() {
             recurring::reject_recurring,
             accounting::reconcile_account_balance,
             accounting::get_net_worth,
+            accounting::get_net_worth_history,
             accounting::get_total_spending,
             budgets::list_budgets,
             budgets::create_budget,

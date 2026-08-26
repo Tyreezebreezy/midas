@@ -4,6 +4,7 @@
 //! "balance." See ADR-0007 for the balance/opening-balance design.
 
 use rusqlite::{params, Connection, OptionalExtension};
+use serde::Serialize;
 
 use crate::accounts::{self, Account, AccountError};
 use crate::dates;
@@ -80,18 +81,89 @@ pub fn spending_in_range(
 /// convention already makes a liability's balance "positive = owe more," so
 /// it is subtracted rather than added. Archived accounts and accounts with
 /// `include_in_net_worth = false` are excluded.
-pub fn net_worth(accounts: &[Account]) -> i64 {
-    accounts
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct NetWorthBreakdown {
+    pub total_assets_cents: i64,
+    pub total_liabilities_cents: i64,
+    pub net_worth_cents: i64,
+}
+
+/// Included assets minus included liabilities, with each side of the split
+/// exposed separately - never just the net total, so the UI can show a
+/// useful current snapshot rather than one opaque number.
+pub fn net_worth_breakdown(accounts: &[Account]) -> NetWorthBreakdown {
+    let (mut total_assets_cents, mut total_liabilities_cents) = (0i64, 0i64);
+    for a in accounts
         .iter()
         .filter(|a| a.include_in_net_worth && !a.is_archived)
-        .map(|a| {
-            if a.account_type.is_liability() {
-                -a.balance_cents
-            } else {
-                a.balance_cents
-            }
+    {
+        if a.account_type.is_liability() {
+            total_liabilities_cents += a.balance_cents;
+        } else {
+            total_assets_cents += a.balance_cents;
+        }
+    }
+    NetWorthBreakdown {
+        total_assets_cents,
+        total_liabilities_cents,
+        net_worth_cents: total_assets_cents - total_liabilities_cents,
+    }
+}
+
+/// Net worth as of a past date: each included, non-archived account's
+/// balance is recomputed from only the transactions dated on or before
+/// `as_of_date` - the same "balance = sum of transactions" principle
+/// `accounts::get` uses for the current balance, just anchored to a past
+/// point. An account with no transactions yet at that date contributes 0,
+/// which is correct (nothing to backfill or guess).
+fn net_worth_as_of(conn: &Connection, as_of_date: &str) -> rusqlite::Result<i64> {
+    let mut stmt = conn.prepare(
+        "SELECT a.account_type, COALESCE(SUM(t.amount_cents), 0) FROM accounts a
+         LEFT JOIN transactions t
+             ON t.account_id = a.id AND t.is_archived = 0 AND t.transaction_date <= ?1
+         WHERE a.is_archived = 0 AND a.include_in_net_worth = 1
+         GROUP BY a.id",
+    )?;
+    let rows = stmt.query_map(params![as_of_date], |row| {
+        let account_type = crate::accounts::AccountType::from_sql_str(&row.get::<_, String>(0)?)?;
+        let balance: i64 = row.get(1)?;
+        Ok(if account_type.is_liability() {
+            -balance
+        } else {
+            balance
         })
-        .sum()
+    })?;
+    rows.collect::<rusqlite::Result<Vec<i64>>>()
+        .map(|v| v.iter().sum())
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct NetWorthPoint {
+    pub as_of_date: String,
+    pub net_worth_cents: i64,
+}
+
+const NET_WORTH_HISTORY_MONTHS: i64 = 6;
+
+/// Net worth at the end of each of the last `NET_WORTH_HISTORY_MONTHS`
+/// months, plus today as the final, current point - a simple trend with no
+/// separate snapshot table to keep in sync, since it's recomputed from the
+/// ledger every time it's asked for.
+pub fn net_worth_history(conn: &Connection) -> rusqlite::Result<Vec<NetWorthPoint>> {
+    let today: String = conn.query_row("SELECT date('now')", [], |row| row.get(0))?;
+    let mut points = Vec::new();
+    for i in (1..=NET_WORTH_HISTORY_MONTHS).rev() {
+        let as_of_date = dates::end_of_month(&dates::add_months(&today, -i));
+        points.push(NetWorthPoint {
+            net_worth_cents: net_worth_as_of(conn, &as_of_date)?,
+            as_of_date,
+        });
+    }
+    points.push(NetWorthPoint {
+        net_worth_cents: net_worth_as_of(conn, &today)?,
+        as_of_date: today,
+    });
+    Ok(points)
 }
 
 /// Establishes or corrects an account's balance baseline (ADR-0007) - the
@@ -160,10 +232,18 @@ pub fn reconcile_balance(
 }
 
 #[tauri::command]
-pub fn get_net_worth(state: tauri::State<crate::db::DbState>) -> Result<i64, String> {
+pub fn get_net_worth(state: tauri::State<crate::db::DbState>) -> Result<NetWorthBreakdown, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     let accounts = accounts::list(&conn, false).map_err(|e| e.to_string())?;
-    Ok(net_worth(&accounts))
+    Ok(net_worth_breakdown(&accounts))
+}
+
+#[tauri::command]
+pub fn get_net_worth_history(
+    state: tauri::State<crate::db::DbState>,
+) -> Result<Vec<NetWorthPoint>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    net_worth_history(&conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -420,9 +500,10 @@ mod tests {
         );
 
         let accounts = accounts::list(&conn, false).unwrap();
-        // assets: 100_000 + 500_000 + 20_000 + 3_000_000 = 3_620_000
-        // liabilities: 40_000 + 1_000_000 + 10_000 = 1_050_000
-        assert_eq!(net_worth(&accounts), 3_620_000 - 1_050_000);
+        let breakdown = net_worth_breakdown(&accounts);
+        assert_eq!(breakdown.total_assets_cents, 3_620_000);
+        assert_eq!(breakdown.total_liabilities_cents, 1_050_000);
+        assert_eq!(breakdown.net_worth_cents, 3_620_000 - 1_050_000);
     }
 
     #[test]
@@ -467,7 +548,7 @@ mod tests {
         accounts::set_archived(&conn, archived, true).unwrap();
 
         let accounts = accounts::list(&conn, true).unwrap();
-        assert_eq!(net_worth(&accounts), 100_000);
+        assert_eq!(net_worth_breakdown(&accounts).net_worth_cents, 100_000);
     }
 
     // --- Opening / baseline balances ---
@@ -721,5 +802,100 @@ mod tests {
             spending_in_range(&conn, None, "2026-08-01", "2026-08-31").unwrap(),
             5000
         );
+    }
+
+    fn today_str(conn: &Connection) -> String {
+        conn.query_row("SELECT date('now')", [], |row| row.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn net_worth_as_of_ignores_transactions_after_the_cutoff() {
+        let conn = test_conn();
+        let checking = make_account(&conn, AccountType::Checking);
+        let today = today_str(&conn);
+        add_txn(
+            &conn,
+            checking,
+            &dates::add_days(&today, -10),
+            100_000,
+            TransactionType::Income,
+        );
+        add_txn(
+            &conn,
+            checking,
+            &dates::add_days(&today, -1),
+            50_000,
+            TransactionType::Income,
+        );
+        add_txn(&conn, checking, &today, 25_000, TransactionType::Income); // after most cutoffs below
+
+        assert_eq!(
+            net_worth_as_of(&conn, &dates::add_days(&today, -10)).unwrap(),
+            100_000
+        );
+        assert_eq!(
+            net_worth_as_of(&conn, &dates::add_days(&today, -1)).unwrap(),
+            150_000
+        );
+        assert_eq!(net_worth_as_of(&conn, &today).unwrap(), 175_000);
+    }
+
+    #[test]
+    fn net_worth_as_of_subtracts_liabilities_the_same_as_current_net_worth() {
+        let conn = test_conn();
+        let checking = make_account(&conn, AccountType::Checking);
+        let card = make_account(&conn, AccountType::CreditCard);
+        let today = today_str(&conn);
+        add_txn(&conn, checking, &today, 100_000, TransactionType::Income);
+        add_txn(&conn, card, &today, 30_000, TransactionType::Purchase); // owes $300
+
+        assert_eq!(net_worth_as_of(&conn, &today).unwrap(), 70_000);
+    }
+
+    #[test]
+    fn net_worth_as_of_excludes_accounts_not_included_in_net_worth() {
+        let conn = test_conn();
+        let checking = make_account(&conn, AccountType::Checking);
+        let today = today_str(&conn);
+        add_txn(&conn, checking, &today, 100_000, TransactionType::Income);
+
+        let excluded = accounts::create(
+            &conn,
+            &AccountInput {
+                name: "Excluded".to_string(),
+                institution: None,
+                account_type: AccountType::Investment,
+                include_in_net_worth: false,
+                notes: None,
+            },
+        )
+        .unwrap();
+        add_txn(
+            &conn,
+            excluded.id,
+            &today,
+            9_999_999,
+            TransactionType::Income,
+        );
+
+        assert_eq!(net_worth_as_of(&conn, &today).unwrap(), 100_000);
+    }
+
+    #[test]
+    fn net_worth_history_has_seven_points_ending_at_todays_current_net_worth() {
+        let conn = test_conn();
+        let checking = make_account(&conn, AccountType::Checking);
+        let today = today_str(&conn);
+        add_txn(&conn, checking, &today, 50_000, TransactionType::Income);
+
+        let history = net_worth_history(&conn).unwrap();
+        assert_eq!(history.len(), 7, "6 months back plus today");
+        assert_eq!(history.last().unwrap().as_of_date, today);
+        assert_eq!(history.last().unwrap().net_worth_cents, 50_000);
+        // Every earlier point predates the deposit, so net worth was 0 then.
+        for point in &history[..6] {
+            assert_eq!(point.net_worth_cents, 0);
+        }
     }
 }

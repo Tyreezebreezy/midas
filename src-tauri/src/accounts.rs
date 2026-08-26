@@ -33,7 +33,7 @@ impl AccountType {
         }
     }
 
-    fn from_sql_str(s: &str) -> rusqlite::Result<Self> {
+    pub(crate) fn from_sql_str(s: &str) -> rusqlite::Result<Self> {
         Ok(match s {
             "checking" => AccountType::Checking,
             "savings" => AccountType::Savings,
