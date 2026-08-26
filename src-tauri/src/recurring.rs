@@ -283,9 +283,14 @@ pub fn detect_candidates(
     conn: &Connection,
     account_id: i64,
 ) -> Result<Vec<RecurringSeries>, RecurringError> {
+    // opening_balance is structurally at most one row (never reaches the
+    // 3-occurrence bar anyway), but balance_adjustment can legitimately
+    // recur - one per reconciliation date, often sharing the same merchant
+    // label - so it must be excluded explicitly (ADR-0009).
     let mut stmt = conn.prepare(
         "SELECT merchant, transaction_date, amount_cents, category FROM transactions
          WHERE account_id = ?1 AND is_archived = 0 AND trim(merchant) != ''
+             AND transaction_type NOT IN ('opening_balance', 'balance_adjustment')
          ORDER BY merchant, transaction_date",
     )?;
     let rows: Vec<(String, String, i64, Option<String>)> = stmt
@@ -397,6 +402,8 @@ mod tests {
         conn.execute_batch(include_str!("../migrations/0003_rules_and_recurring.sql"))
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0004_accounting_boundary.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../migrations/0007_balance_adjustment.sql"))
             .unwrap();
         conn
     }
@@ -525,6 +532,26 @@ mod tests {
             "already-proposed merchants must not be proposed again"
         );
         assert_eq!(list(&conn, Some(account_id)).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn balance_adjustments_are_never_proposed_as_a_recurring_pattern() {
+        // ADR-0009 regression: unlike opening_balance (structurally at most
+        // one row), balance_adjustment can legitimately recur - one per
+        // reconciliation - and could otherwise look exactly like a
+        // consistent monthly pattern to this detector.
+        let conn = test_conn();
+        let account_id = make_account(&conn);
+        crate::accounting::reconcile_balance(&conn, account_id, 500, "2026-01-01").unwrap();
+        crate::accounting::reconcile_balance(&conn, account_id, 1500, "2026-01-31").unwrap();
+        crate::accounting::reconcile_balance(&conn, account_id, 2500, "2026-03-02").unwrap();
+        crate::accounting::reconcile_balance(&conn, account_id, 3500, "2026-04-01").unwrap();
+
+        let candidates = detect_candidates(&conn, account_id).unwrap();
+        assert!(
+            candidates.is_empty(),
+            "opening_balance/balance_adjustment must never be proposed as a recurring series"
+        );
     }
 
     #[test]

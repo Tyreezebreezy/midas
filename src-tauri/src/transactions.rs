@@ -12,12 +12,22 @@ pub enum TransactionType {
     Income,
     Transfer,
     Refund,
-    /// A structural anchor, not a real-world event - see ADR-0007. Created
-    /// only by `accounting::reconcile_balance`, never user-selectable in the
-    /// manual transaction form (deliberately absent from the frontend's
-    /// `TRANSACTION_TYPES` list) and never spending/income (see
+    /// A structural anchor at the account's true historical starting point -
+    /// see ADR-0007/ADR-0009. Established once by
+    /// `accounting::reconcile_balance` and never moved or rewritten by a
+    /// later reconciliation (ADR-0009's correction). Never user-selectable
+    /// in the manual transaction form and never spending/income (see
     /// `accounting::spending_effect`).
     OpeningBalance,
+    /// A dated correction for drift discovered after the opening balance was
+    /// already established - see ADR-0009. Unlike `OpeningBalance`, MIDAS
+    /// may hold several of these over an account's life (at most one per
+    /// reconciliation date), each landing on its own `transaction_date`
+    /// rather than backdated - so an adjustment made today never changes
+    /// what net worth or balance looked like before today. Never
+    /// user-selectable in the manual transaction form and never
+    /// spending/income/recurring activity.
+    BalanceAdjustment,
 }
 
 impl TransactionType {
@@ -28,6 +38,7 @@ impl TransactionType {
             TransactionType::Transfer => "transfer",
             TransactionType::Refund => "refund",
             TransactionType::OpeningBalance => "opening_balance",
+            TransactionType::BalanceAdjustment => "balance_adjustment",
         }
     }
 
@@ -38,6 +49,7 @@ impl TransactionType {
             "transfer" => TransactionType::Transfer,
             "refund" => TransactionType::Refund,
             "opening_balance" => TransactionType::OpeningBalance,
+            "balance_adjustment" => TransactionType::BalanceAdjustment,
             other => {
                 return Err(rusqlite::Error::InvalidColumnType(
                     0,
@@ -437,6 +449,8 @@ mod tests {
         conn.execute_batch(include_str!("../migrations/0003_rules_and_recurring.sql"))
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0004_accounting_boundary.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../migrations/0007_balance_adjustment.sql"))
             .unwrap();
         conn
     }

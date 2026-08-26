@@ -295,6 +295,8 @@ mod tests {
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0005_budgets.sql"))
             .unwrap();
+        conn.execute_batch(include_str!("../migrations/0007_balance_adjustment.sql"))
+            .unwrap();
         conn
     }
 
@@ -560,5 +562,37 @@ mod tests {
         assert_eq!(list_for_month(&conn, "2026-08-15").unwrap().len(), 1);
         assert!(list_for_month(&conn, "2026-07-01").unwrap().is_empty());
         assert!(list_for_month(&conn, "2026-06-01").unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_balance_adjustment_never_counts_toward_a_budgets_actual_spending() {
+        // ADR-0009 regression: reconciling an account's balance must not
+        // leak into budget actuals, no matter how large the correction is.
+        let conn = test_conn();
+        let account_id = make_account(&conn);
+        create(&conn, &sample_input()).unwrap(); // Groceries, August, $400 planned
+
+        add_txn(
+            &conn,
+            account_id,
+            "2026-08-05",
+            -10000,
+            TransactionType::Purchase,
+            "Groceries",
+        );
+        accounting::reconcile_balance(&conn, account_id, 50_000, "2026-07-01").unwrap();
+
+        let before = list_for_month(&conn, "2026-08-01").unwrap();
+        assert_eq!(before[0].actual_amount_cents, 10000);
+
+        // A large same-month adjustment that would badly distort the
+        // budget if it were ever counted as spending.
+        accounting::reconcile_balance(&conn, account_id, 999_000, "2026-08-20").unwrap();
+
+        let after = list_for_month(&conn, "2026-08-01").unwrap();
+        assert_eq!(
+            after[0].actual_amount_cents, 10000,
+            "the adjustment must never be counted as budget activity"
+        );
     }
 }

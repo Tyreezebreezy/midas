@@ -172,6 +172,8 @@ mod tests {
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0006_savings_goals.sql"))
             .unwrap();
+        conn.execute_batch(include_str!("../migrations/0007_balance_adjustment.sql"))
+            .unwrap();
         conn
     }
 
@@ -497,5 +499,49 @@ mod tests {
             set_reserve(&conn, -1),
             Err(SafeToSpendError::Validation(_))
         ));
+    }
+
+    #[test]
+    fn safe_to_spend_uses_the_corrected_current_cash_position_after_a_later_reconciliation() {
+        // ADR-0009 regression: a reconciliation made after the pay schedule
+        // and prior balance were already established must still flow
+        // through to Safe to Spend's eligible cash.
+        let conn = test_conn();
+        let checking = make_account(&conn, "Checking", AccountType::Checking);
+        crate::accounting::reconcile_balance(&conn, checking, 100_000, "2026-01-01").unwrap();
+        set_schedule(
+            &conn,
+            &PaySchedule::Biweekly {
+                anchor_date: today(&conn),
+            },
+        )
+        .unwrap();
+
+        let before = calculate(&conn).unwrap();
+        let SafeToSpendResult::Complete {
+            eligible_cash_cents: eligible_before,
+            safe_to_spend_cents: safe_before,
+            ..
+        } = before
+        else {
+            panic!("expected Complete");
+        };
+        assert_eq!(eligible_before, 100_000);
+        assert_eq!(safe_before, 100_000);
+
+        // The owner checks their bank and it actually shows $750, not $1,000.
+        crate::accounting::reconcile_balance(&conn, checking, 75_000, &today(&conn)).unwrap();
+
+        let after = calculate(&conn).unwrap();
+        let SafeToSpendResult::Complete {
+            eligible_cash_cents: eligible_after,
+            safe_to_spend_cents: safe_after,
+            ..
+        } = after
+        else {
+            panic!("expected Complete");
+        };
+        assert_eq!(eligible_after, 75_000);
+        assert_eq!(safe_after, 75_000);
     }
 }

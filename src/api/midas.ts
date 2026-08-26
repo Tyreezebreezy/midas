@@ -41,7 +41,12 @@ export const accountsApi = {
 // increases the balance, negative decreases it, for every account type.
 // transaction_type is what spending/income reports actually read.
 export type TransactionType =
-  "purchase" | "income" | "transfer" | "refund" | "opening_balance";
+  | "purchase"
+  | "income"
+  | "transfer"
+  | "refund"
+  | "opening_balance"
+  | "balance_adjustment";
 
 export interface Transaction {
   id: number;

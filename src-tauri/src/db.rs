@@ -9,6 +9,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0004_accounting_boundary.sql"),
     include_str!("../migrations/0005_budgets.sql"),
     include_str!("../migrations/0006_savings_goals.sql"),
+    include_str!("../migrations/0007_balance_adjustment.sql"),
 ];
 
 /// Tauri-managed state wrapping the single app-wide SQLite connection.

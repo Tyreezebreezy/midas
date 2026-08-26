@@ -1,7 +1,8 @@
 //! Accounting-boundary hardening (Phase 4A): the shared rules every later
 //! financial calculation (budgets, Safe to Spend, net worth) is built on top
 //! of, rather than each reimplementing its own notion of "spending" or
-//! "balance." See ADR-0007 for the balance/opening-balance design.
+//! "balance." See ADR-0007 for the balance/opening-balance design and
+//! ADR-0009 for the opening-balance/balance-adjustment split.
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
@@ -11,20 +12,25 @@ use crate::dates;
 use crate::transactions::{Transaction, TransactionType};
 
 const OPENING_BALANCE_LABEL: &str = "Opening balance";
+const ADJUSTMENT_LABEL: &str = "Balance adjustment";
 
 /// How much a single transaction contributes to a "total spending" figure.
 /// Purchases add their magnitude; refunds subtract theirs (a refund is
 /// money back, reducing net spending, regardless of which specific purchase
 /// it corresponds to - MIDAS does not auto-link refunds to purchases, per
-/// Phase 2's explicit non-goal). Income, transfers, and the opening-balance
-/// anchor never count as spending - this is what keeps a credit-card
-/// payment from ever becoming a second expense on top of the purchases it
-/// pays off.
+/// Phase 2's explicit non-goal). Income, transfers, and the opening-balance/
+/// balance-adjustment anchors never count as spending - this is what keeps
+/// a credit-card payment from ever becoming a second expense on top of the
+/// purchases it pays off, and what keeps a reconciliation correction out of
+/// every budget and spending total (ADR-0009).
 pub fn spending_effect(transaction_type: TransactionType, amount_cents: i64) -> i64 {
     match transaction_type {
         TransactionType::Purchase => amount_cents.abs(),
         TransactionType::Refund => -amount_cents.abs(),
-        TransactionType::Income | TransactionType::Transfer | TransactionType::OpeningBalance => 0,
+        TransactionType::Income
+        | TransactionType::Transfer
+        | TransactionType::OpeningBalance
+        | TransactionType::BalanceAdjustment => 0,
     }
 }
 
@@ -166,54 +172,100 @@ pub fn net_worth_history(conn: &Connection) -> rusqlite::Result<Vec<NetWorthPoin
     Ok(points)
 }
 
-/// Establishes or corrects an account's balance baseline (ADR-0007) - the
-/// smallest mechanism for the "partial history" problem, where MIDAS only
-/// holds some of an account's real transaction history. Computes the gap
-/// between `known_current_balance_cents` (what the owner's bank actually
-/// shows as of `as_of_date`) and the sum of every other transaction already
-/// on record, then upserts a single `opening_balance` anchor transaction
-/// for exactly that gap - dated one day before the account's earliest other
-/// transaction (or `as_of_date` if there are none yet) so it always sorts
-/// strictly first, with no same-day tiebreak ambiguity anywhere else in the
-/// app. Deletes the anchor if reconciliation now computes a zero gap,
-/// keeping the ledger's shape identical to "never needed one."
+/// Establishes or corrects an account's balance (ADR-0009). The *first*
+/// time this is called for an account, it establishes the opening balance -
+/// anchored before the account's earliest other transaction (or
+/// `as_of_date` if there are none yet) and never touched again. Every
+/// *subsequent* call is a dated adjustment landing on `as_of_date` itself,
+/// leaving the opening balance and every earlier adjustment untouched - so
+/// reconciling today never changes what MIDAS reported yesterday.
 pub fn reconcile_balance(
     conn: &Connection,
     account_id: i64,
     known_current_balance_cents: i64,
     as_of_date: &str,
 ) -> Result<Account, AccountError> {
-    let (sum_of_real_transactions, earliest_other_date): (i64, Option<String>) = conn.query_row(
+    let opening_balance_exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM transactions WHERE account_id = ?1 AND transaction_type = 'opening_balance')",
+        params![account_id],
+        |row| row.get(0),
+    )?;
+
+    if opening_balance_exists {
+        upsert_balance_adjustment(conn, account_id, known_current_balance_cents, as_of_date)?;
+    } else {
+        establish_opening_balance(conn, account_id, known_current_balance_cents, as_of_date)?;
+    }
+
+    accounts::get(conn, account_id)?.ok_or(AccountError::NotFound(account_id))
+}
+
+fn establish_opening_balance(
+    conn: &Connection,
+    account_id: i64,
+    known_current_balance_cents: i64,
+    as_of_date: &str,
+) -> Result<(), AccountError> {
+    let (sum_so_far, earliest_date): (i64, Option<String>) = conn.query_row(
         "SELECT COALESCE(SUM(amount_cents), 0), MIN(transaction_date) FROM transactions
-         WHERE account_id = ?1 AND transaction_type != 'opening_balance' AND is_archived = 0",
+         WHERE account_id = ?1 AND is_archived = 0",
         params![account_id],
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
-    let delta = known_current_balance_cents - sum_of_real_transactions;
+    let delta = known_current_balance_cents - sum_so_far;
+    if delta == 0 {
+        return Ok(());
+    }
 
-    let anchor_date = match earliest_other_date {
+    let anchor_date = match earliest_date {
         Some(d) => dates::add_days(&d, -1),
         None => as_of_date.to_string(),
     };
+    conn.execute(
+        "INSERT INTO transactions (
+            account_id, transaction_date, amount_cents, transaction_type,
+            raw_description, merchant
+         ) VALUES (?1, ?2, ?3, 'opening_balance', ?4, ?4)",
+        params![account_id, anchor_date, delta, OPENING_BALANCE_LABEL],
+    )?;
+    Ok(())
+}
 
-    let existing_id: Option<i64> = conn
+fn upsert_balance_adjustment(
+    conn: &Connection,
+    account_id: i64,
+    known_current_balance_cents: i64,
+    as_of_date: &str,
+) -> Result<(), AccountError> {
+    let existing: Option<(i64, i64)> = conn
         .query_row(
-            "SELECT id FROM transactions WHERE account_id = ?1 AND transaction_type = 'opening_balance'",
-            params![account_id],
-            |row| row.get(0),
+            "SELECT id, amount_cents FROM transactions
+             WHERE account_id = ?1 AND transaction_type = 'balance_adjustment' AND transaction_date = ?2",
+            params![account_id, as_of_date],
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?;
 
-    match (existing_id, delta) {
-        (Some(id), 0) => {
+    let current_total: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(amount_cents), 0) FROM transactions WHERE account_id = ?1 AND is_archived = 0",
+        params![account_id],
+        |row| row.get(0),
+    )?;
+    // Exclude this same-date adjustment's own prior amount from the
+    // baseline, so re-reconciling on a date that already has one doesn't
+    // count it twice against itself.
+    let baseline = current_total - existing.map(|(_, amount)| amount).unwrap_or(0);
+    let delta = known_current_balance_cents - baseline;
+
+    match (existing, delta) {
+        (Some((id, _)), 0) => {
             conn.execute("DELETE FROM transactions WHERE id = ?1", params![id])?;
         }
-        (Some(id), _) => {
+        (Some((id, _)), _) => {
             conn.execute(
-                "UPDATE transactions SET amount_cents = ?1, transaction_date = ?2,
-                    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-                 WHERE id = ?3",
-                params![delta, anchor_date, id],
+                "UPDATE transactions SET amount_cents = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                 WHERE id = ?2",
+                params![delta, id],
             )?;
         }
         (None, 0) => {}
@@ -222,13 +274,12 @@ pub fn reconcile_balance(
                 "INSERT INTO transactions (
                     account_id, transaction_date, amount_cents, transaction_type,
                     raw_description, merchant
-                 ) VALUES (?1, ?2, ?3, 'opening_balance', ?4, ?4)",
-                params![account_id, anchor_date, delta, OPENING_BALANCE_LABEL],
+                 ) VALUES (?1, ?2, ?3, 'balance_adjustment', ?4, ?4)",
+                params![account_id, as_of_date, delta, ADJUSTMENT_LABEL],
             )?;
         }
     }
-
-    accounts::get(conn, account_id)?.ok_or(AccountError::NotFound(account_id))
+    Ok(())
 }
 
 #[tauri::command]
@@ -284,6 +335,8 @@ mod tests {
         conn.execute_batch(include_str!("../migrations/0003_rules_and_recurring.sql"))
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0004_accounting_boundary.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../migrations/0007_balance_adjustment.sql"))
             .unwrap();
         conn
     }
@@ -632,10 +685,13 @@ mod tests {
     }
 
     #[test]
-    fn reconcile_is_idempotent_and_updates_in_place_rather_than_accumulating() {
+    fn first_reconcile_establishes_opening_balance_and_is_never_touched_again() {
         let conn = test_conn();
         let checking = make_account(&conn, AccountType::Checking);
         reconcile_balance(&conn, checking, 100_000, "2026-08-25").unwrap();
+        // A second call on the SAME date now establishes an opening balance
+        // already existing, so it must go through the adjustment path
+        // instead of rewriting the opening balance in place (ADR-0009).
         reconcile_balance(&conn, checking, 150_000, "2026-08-25").unwrap();
 
         let txns = transactions::list(
@@ -647,20 +703,52 @@ mod tests {
             },
         )
         .unwrap();
-        let anchors: Vec<_> = txns
+        let opening: Vec<_> = txns
             .iter()
             .filter(|t| t.transaction_type == TransactionType::OpeningBalance)
             .collect();
+        assert_eq!(opening.len(), 1);
         assert_eq!(
-            anchors.len(),
-            1,
-            "must upsert, never accumulate a second anchor"
+            opening[0].amount_cents, 100_000,
+            "the opening balance's own amount must be exactly what the first call set - untouched by the second"
         );
         assert_eq!(balance_of(&conn, checking), 150_000);
     }
 
     #[test]
-    fn reconcile_removes_the_anchor_once_it_is_no_longer_needed() {
+    fn repeated_adjustments_on_the_same_date_upsert_in_place_rather_than_accumulating() {
+        let conn = test_conn();
+        let checking = make_account(&conn, AccountType::Checking);
+        reconcile_balance(&conn, checking, 100_000, "2026-01-01").unwrap(); // opening balance
+        reconcile_balance(&conn, checking, 150_000, "2026-08-25").unwrap(); // first adjustment
+        reconcile_balance(&conn, checking, 175_000, "2026-08-25").unwrap(); // corrects the same adjustment
+
+        let txns = transactions::list(
+            &conn,
+            &transactions::TransactionFilter {
+                account_id: Some(checking),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let adjustments: Vec<_> = txns
+            .iter()
+            .filter(|t| t.transaction_type == TransactionType::BalanceAdjustment)
+            .collect();
+        assert_eq!(
+            adjustments.len(),
+            1,
+            "must upsert the same date's adjustment, never accumulate a second one"
+        );
+        assert_eq!(adjustments[0].amount_cents, 75_000);
+        assert_eq!(balance_of(&conn, checking), 175_000);
+    }
+
+    #[test]
+    fn second_reconcile_on_a_new_date_creates_no_adjustment_when_ledger_already_matches() {
+        // ADR-0009: unlike the pre-correction design, a second reconcile
+        // call never deletes or touches the opening balance - it only ever
+        // creates/updates/removes an adjustment dated at its own as_of_date.
         let conn = test_conn();
         let checking = make_account(&conn, AccountType::Checking);
         reconcile_balance(&conn, checking, 50_000, "2026-08-25").unwrap();
@@ -672,9 +760,7 @@ mod tests {
             TransactionType::Income,
         );
 
-        // Now the real transactions already sum to the known balance -
-        // reconciling again should clean up the now-unnecessary anchor.
-        reconcile_balance(&conn, checking, 50_000, "2026-08-25").unwrap();
+        reconcile_balance(&conn, checking, 100_000, "2026-09-01").unwrap();
 
         let txns = transactions::list(
             &conn,
@@ -684,9 +770,63 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(txns
+        assert!(
+            txns.iter()
+                .any(|t| t.transaction_type == TransactionType::OpeningBalance),
+            "the opening balance must still exist, untouched"
+        );
+        assert!(
+            txns.iter()
+                .all(|t| t.transaction_type != TransactionType::BalanceAdjustment),
+            "the ledger already matched the target, so no adjustment should have been created"
+        );
+        assert_eq!(balance_of(&conn, checking), 100_000);
+    }
+
+    #[test]
+    fn re_reconciling_the_same_date_removes_the_no_longer_needed_adjustment() {
+        let conn = test_conn();
+        let checking = make_account(&conn, AccountType::Checking);
+        reconcile_balance(&conn, checking, 50_000, "2026-01-01").unwrap();
+
+        // A later reconciliation on 2026-08-25 that doesn't match the
+        // ledger creates a real adjustment dated then.
+        reconcile_balance(&conn, checking, 80_000, "2026-08-25").unwrap();
+        let after_first = transactions::list(
+            &conn,
+            &transactions::TransactionFilter {
+                account_id: Some(checking),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let adjustments: Vec<_> = after_first
             .iter()
-            .all(|t| t.transaction_type != TransactionType::OpeningBalance));
+            .filter(|t| t.transaction_type == TransactionType::BalanceAdjustment)
+            .collect();
+        assert_eq!(adjustments.len(), 1);
+        assert_eq!(adjustments[0].transaction_date, "2026-08-25");
+
+        // Re-reconciling on that same date back to the original ledger
+        // total removes that date's now-unnecessary adjustment.
+        reconcile_balance(&conn, checking, 50_000, "2026-08-25").unwrap();
+        let after_second = transactions::list(
+            &conn,
+            &transactions::TransactionFilter {
+                account_id: Some(checking),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(after_second
+            .iter()
+            .all(|t| t.transaction_type != TransactionType::BalanceAdjustment));
+        assert!(
+            after_second
+                .iter()
+                .any(|t| t.transaction_type == TransactionType::OpeningBalance),
+            "the opening balance itself must never be touched by this"
+        );
         assert_eq!(balance_of(&conn, checking), 50_000);
     }
 
@@ -897,5 +1037,104 @@ mod tests {
         for point in &history[..6] {
             assert_eq!(point.net_worth_cents, 0);
         }
+    }
+
+    // --- Phase 4C regression tests (ADR-0009) ---
+
+    #[test]
+    fn january_history_is_unchanged_after_a_later_reconciliation_and_todays_balance_is_correct() {
+        let conn = test_conn();
+        let checking = make_account(&conn, AccountType::Checking);
+        let today = today_str(&conn);
+        let old_date = dates::add_days(&today, -200);
+
+        reconcile_balance(&conn, checking, 50_000, &old_date).unwrap();
+        let historical_view_before = net_worth_as_of(&conn, &old_date).unwrap();
+        assert_eq!(historical_view_before, 50_000);
+
+        // A much later reconciliation with a different, corrected balance.
+        reconcile_balance(&conn, checking, 80_000, &today).unwrap();
+
+        let historical_view_after = net_worth_as_of(&conn, &old_date).unwrap();
+        assert_eq!(
+            historical_view_after, 50_000,
+            "the old date's net worth must be exactly what it was before the later reconciliation ever happened"
+        );
+        assert_eq!(
+            balance_of(&conn, checking),
+            80_000,
+            "today's balance must reflect the correction"
+        );
+    }
+
+    #[test]
+    fn net_worth_history_changes_only_from_the_adjustment_date_forward() {
+        let conn = test_conn();
+        let checking = make_account(&conn, AccountType::Checking);
+        let today = today_str(&conn);
+        let opening_date = dates::add_days(&today, -200);
+        let adjustment_date = dates::add_days(&today, -10);
+
+        reconcile_balance(&conn, checking, 50_000, &opening_date).unwrap();
+        let before_cutoff = dates::add_days(&adjustment_date, -1);
+        let net_worth_before_cutoff_pre = net_worth_as_of(&conn, &before_cutoff).unwrap();
+        let net_worth_on_adjustment_date_pre = net_worth_as_of(&conn, &adjustment_date).unwrap();
+        assert_eq!(net_worth_before_cutoff_pre, 50_000);
+        assert_eq!(net_worth_on_adjustment_date_pre, 50_000);
+
+        reconcile_balance(&conn, checking, 90_000, &adjustment_date).unwrap();
+
+        assert_eq!(
+            net_worth_as_of(&conn, &before_cutoff).unwrap(),
+            50_000,
+            "the day before the adjustment must be unaffected"
+        );
+        assert_eq!(
+            net_worth_as_of(&conn, &adjustment_date).unwrap(),
+            90_000,
+            "the adjustment's own effective date must include it"
+        );
+        assert_eq!(net_worth_as_of(&conn, &today).unwrap(), 90_000);
+    }
+
+    #[test]
+    fn budgets_and_spending_ignore_balance_adjustments() {
+        let conn = test_conn();
+        let checking = make_account(&conn, AccountType::Checking);
+        let today = today_str(&conn);
+        reconcile_balance(&conn, checking, 50_000, &dates::add_days(&today, -200)).unwrap();
+
+        crate::transactions::create(
+            &conn,
+            &crate::transactions::TransactionInput {
+                account_id: checking,
+                transaction_date: today.clone(),
+                posted_date: None,
+                amount_cents: -2000,
+                transaction_type: TransactionType::Purchase,
+                raw_description: "Lunch".to_string(),
+                merchant: None,
+                category: Some("Dining".to_string()),
+                subcategory: None,
+                notes: None,
+                tags: None,
+                is_pending: None,
+            },
+        )
+        .unwrap();
+
+        let spending_before = spending_in_range(&conn, Some("Dining"), &today, &today).unwrap();
+        assert_eq!(spending_before, 2000);
+
+        // A large adjustment that would badly distort spending if it leaked in.
+        reconcile_balance(&conn, checking, 500_000, &today).unwrap();
+
+        let spending_after = spending_in_range(&conn, Some("Dining"), &today, &today).unwrap();
+        assert_eq!(
+            spending_after, 2000,
+            "the balance adjustment must never be counted as spending"
+        );
+        let spending_all_categories = spending_in_range(&conn, None, &today, &today).unwrap();
+        assert_eq!(spending_all_categories, 2000);
     }
 }

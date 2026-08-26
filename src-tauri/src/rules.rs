@@ -273,6 +273,8 @@ mod tests {
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0004_accounting_boundary.sql"))
             .unwrap();
+        conn.execute_batch(include_str!("../migrations/0007_balance_adjustment.sql"))
+            .unwrap();
         conn
     }
 
