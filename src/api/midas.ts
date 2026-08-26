@@ -391,3 +391,27 @@ export const payCycleApi = {
   getLikelyIncomeSeries: () =>
     invoke<RecurringSeries[]>("get_likely_income_series"),
 };
+
+// --- Safe to Spend (Phase 4B) ---
+export type SafeToSpendResult =
+  | {
+      status: "complete";
+      safe_to_spend_cents: number;
+      eligible_cash_cents: number;
+      obligations_before_payday_cents: number;
+      reserved_goal_commitments_cents: number;
+      owner_required_reserve_cents: number;
+      next_payday: string;
+    }
+  | {
+      status: "incomplete";
+      reason: string;
+      eligible_cash_cents: number;
+    };
+
+export const safeToSpendApi = {
+  get: () => invoke<SafeToSpendResult>("get_safe_to_spend"),
+  getReserve: () => invoke<number>("get_safe_to_spend_reserve"),
+  setReserve: (cents: number) =>
+    invoke<void>("set_safe_to_spend_reserve", { cents }),
+};
