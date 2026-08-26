@@ -12,4 +12,8 @@ export const TRANSACTION_TYPE_LABELS: Record<TransactionType, string> = {
   income: "Income",
   transfer: "Transfer",
   refund: "Refund",
+  // Not in TRANSACTION_TYPES - a structural anchor only reconcile creates
+  // (ADR-0007), never user-selectable in the manual entry form. Still needs
+  // a label so it renders correctly wherever transactions are listed.
+  opening_balance: "Opening Balance",
 };

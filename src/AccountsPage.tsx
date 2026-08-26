@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Account } from "./api/midas";
 import { accountsApi } from "./api/midas";
 import AccountForm from "./AccountForm";
+import ReconcileBalanceForm from "./ReconcileBalanceForm";
 import { ACCOUNT_TYPE_LABELS, LIABILITY_TYPES } from "./lib/accountTypes";
 import { formatCents } from "./lib/currency";
 
@@ -11,6 +12,7 @@ function AccountsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Account | null | "new">(null);
+  const [reconciling, setReconciling] = useState<Account | null>(null);
 
   async function refresh() {
     setLoading(true);
@@ -131,6 +133,13 @@ function AccountsPage() {
                     <button
                       type="button"
                       className="btn-link"
+                      onClick={() => setReconciling(account)}
+                    >
+                      Update balance
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-link"
                       onClick={() => toggleArchived(account)}
                     >
                       {account.is_archived ? "Unarchive" : "Archive"}
@@ -149,6 +158,17 @@ function AccountsPage() {
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
+            refresh();
+          }}
+        />
+      )}
+
+      {reconciling !== null && (
+        <ReconcileBalanceForm
+          account={reconciling}
+          onClose={() => setReconciling(null)}
+          onSaved={() => {
+            setReconciling(null);
             refresh();
           }}
         />

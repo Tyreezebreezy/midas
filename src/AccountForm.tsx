@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import type { Account, AccountInput } from "./api/midas";
-import { accountsApi } from "./api/midas";
+import { accountingApi, accountsApi } from "./api/midas";
 import {
   ACCOUNT_TYPES,
   ACCOUNT_TYPE_LABELS,
   LIABILITY_TYPES,
   type AccountType,
 } from "./lib/accountTypes";
-import { centsToDollarInput, parseDollarsToCents } from "./lib/currency";
+import { parseDollarsToCents } from "./lib/currency";
 
 interface AccountFormProps {
   account: Account | null;
@@ -22,9 +22,7 @@ function AccountForm({ account, onClose, onSaved }: AccountFormProps) {
   const [accountType, setAccountType] = useState<AccountType>(
     account?.account_type ?? "checking",
   );
-  const [balanceInput, setBalanceInput] = useState(
-    account ? centsToDollarInput(account.balance_cents) : "0.00",
-  );
+  const [startingBalanceInput, setStartingBalanceInput] = useState("0.00");
   const [includeInNetWorth, setIncludeInNetWorth] = useState(
     account?.include_in_net_worth ?? true,
   );
@@ -42,17 +40,20 @@ function AccountForm({ account, onClose, onSaved }: AccountFormProps) {
       setError("Account name is required.");
       return;
     }
-    const cents = parseDollarsToCents(balanceInput);
-    if (cents === null) {
-      setError("Balance must be a number, e.g. 1234.56.");
-      return;
+    let startingBalanceCents = 0;
+    if (!account) {
+      const parsed = parseDollarsToCents(startingBalanceInput);
+      if (parsed === null) {
+        setError("Starting balance must be a number, e.g. 1234.56.");
+        return;
+      }
+      startingBalanceCents = parsed;
     }
 
     const input: AccountInput = {
       name: name.trim(),
       institution: institution.trim() === "" ? null : institution.trim(),
       account_type: accountType,
-      balance_cents: cents,
       include_in_net_worth: includeInNetWorth,
       notes: notes.trim() === "" ? null : notes.trim(),
     };
@@ -63,7 +64,14 @@ function AccountForm({ account, onClose, onSaved }: AccountFormProps) {
       if (account) {
         await accountsApi.update(account.id, input);
       } else {
-        await accountsApi.create(input);
+        const created = await accountsApi.create(input);
+        if (startingBalanceCents !== 0) {
+          await accountingApi.reconcileBalance(
+            created.id,
+            startingBalanceCents,
+            new Date().toISOString().slice(0, 10),
+          );
+        }
       }
       onSaved();
     } catch (err) {
@@ -121,20 +129,24 @@ function AccountForm({ account, onClose, onSaved }: AccountFormProps) {
           </select>
         </div>
 
-        <div className="field">
-          <label htmlFor="account-balance">Current balance (USD)</label>
-          <input
-            id="account-balance"
-            inputMode="decimal"
-            value={balanceInput}
-            onChange={(e) => setBalanceInput(e.target.value)}
-          />
-          {LIABILITY_TYPES.has(accountType) && (
-            <p className="field-hint">
-              Enter what you owe as a positive number, e.g. 500.00.
-            </p>
-          )}
-        </div>
+        {!account && (
+          <div className="field">
+            <label htmlFor="account-balance">
+              Starting balance (USD), as of today
+            </label>
+            <input
+              id="account-balance"
+              inputMode="decimal"
+              value={startingBalanceInput}
+              onChange={(e) => setStartingBalanceInput(e.target.value)}
+            />
+            {LIABILITY_TYPES.has(accountType) && (
+              <p className="field-hint">
+                Enter what you owe as a positive number, e.g. 500.00.
+              </p>
+            )}
+          </div>
+        )}
 
         <div className="field field-checkbox">
           <label htmlFor="account-net-worth">

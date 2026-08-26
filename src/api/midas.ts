@@ -15,11 +15,12 @@ export interface Account {
   updated_at: string;
 }
 
+// balance_cents is deliberately absent: it's computed live from the ledger,
+// never set directly (ADR-0007). Use accountingApi.reconcileBalance instead.
 export interface AccountInput {
   name: string;
   institution: string | null;
   account_type: AccountType;
-  balance_cents: number;
   include_in_net_worth: boolean;
   notes: string | null;
 }
@@ -39,7 +40,8 @@ export const accountsApi = {
 // EFFECT ON THE ACCOUNT'S OWN BALANCE, not "was this spending" - positive
 // increases the balance, negative decreases it, for every account type.
 // transaction_type is what spending/income reports actually read.
-export type TransactionType = "purchase" | "income" | "transfer" | "refund";
+export type TransactionType =
+  "purchase" | "income" | "transfer" | "refund" | "opening_balance";
 
 export interface Transaction {
   id: number;
@@ -276,4 +278,21 @@ export const recurringApi = {
     invoke<RecurringSeries[]>("detect_recurring", { accountId }),
   confirm: (id: number) => invoke<RecurringSeries>("confirm_recurring", { id }),
   reject: (id: number) => invoke<RecurringSeries>("reject_recurring", { id }),
+};
+
+// --- Accounting boundary (Phase 4A, ADR-0007) ---
+export const accountingApi = {
+  reconcileBalance: (
+    accountId: number,
+    knownCurrentBalanceCents: number,
+    asOfDate: string,
+  ) =>
+    invoke<Account>("reconcile_account_balance", {
+      accountId,
+      knownCurrentBalanceCents,
+      asOfDate,
+    }),
+  getNetWorth: () => invoke<number>("get_net_worth"),
+  getTotalSpending: (filter: TransactionFilter) =>
+    invoke<number>("get_total_spending", { filter }),
 };
