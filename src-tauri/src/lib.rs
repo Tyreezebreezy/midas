@@ -1,5 +1,6 @@
 mod accounting;
 mod accounts;
+mod budgets;
 mod dates;
 mod db;
 mod import;
@@ -51,6 +52,10 @@ pub fn run() {
             accounting::reconcile_account_balance,
             accounting::get_net_worth,
             accounting::get_total_spending,
+            budgets::list_budgets,
+            budgets::create_budget,
+            budgets::update_budget,
+            budgets::delete_budget,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Tauri application");

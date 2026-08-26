@@ -10,7 +10,7 @@
 //! panics on malformed input rather than silently defaulting - a corrupted
 //! or mistakenly-unvalidated date should be loud, never quietly miscomputed.
 
-use chrono::{Days, NaiveDate};
+use chrono::{Datelike, Days, NaiveDate};
 
 /// Parses a strict ISO `YYYY-MM-DD` string into a real calendar date.
 pub fn parse_iso(date: &str) -> Option<NaiveDate> {
@@ -49,6 +49,28 @@ pub fn add_days(date: &str, days: i64) -> String {
     format_iso(shifted.expect("date arithmetic overflowed the supported range"))
 }
 
+fn days_in_month(year: i32, month: u32) -> u32 {
+    let this_month_first = NaiveDate::from_ymd_opt(year, month, 1).expect("month must be valid");
+    let next_month_first = if month == 12 {
+        NaiveDate::from_ymd_opt(year + 1, 1, 1)
+    } else {
+        NaiveDate::from_ymd_opt(year, month + 1, 1)
+    }
+    .expect("month + 1 must be a valid calendar date");
+    (next_month_first - this_month_first).num_days() as u32
+}
+
+pub fn start_of_month(date: &str) -> String {
+    let d = expect_iso(date);
+    format_iso(NaiveDate::from_ymd_opt(d.year(), d.month(), 1).expect("must be valid"))
+}
+
+pub fn end_of_month(date: &str) -> String {
+    let d = expect_iso(date);
+    let last = days_in_month(d.year(), d.month());
+    format_iso(NaiveDate::from_ymd_opt(d.year(), d.month(), last).expect("must be valid"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -70,6 +92,15 @@ mod tests {
         assert_eq!(result, "2026-02-14");
         assert_eq!(days_between(start, &result), 30);
         assert_eq!(add_days(start, -15), "2025-12-31");
+    }
+
+    #[test]
+    fn start_and_end_of_month_are_correct_including_leap_february() {
+        assert_eq!(start_of_month("2026-03-17"), "2026-03-01");
+        assert_eq!(end_of_month("2026-03-17"), "2026-03-31");
+        assert_eq!(end_of_month("2026-02-01"), "2026-02-28");
+        assert_eq!(end_of_month("2024-02-01"), "2024-02-29");
+        assert_eq!(end_of_month("2026-12-01"), "2026-12-31");
     }
 
     #[test]
