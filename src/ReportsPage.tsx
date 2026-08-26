@@ -24,17 +24,28 @@ function CategoryDrilldown({
   to: string;
 }) {
   const [transactions, setTransactions] = useState<Transaction[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    setTransactions(null);
+    setError(null);
     transactionsApi
       .list({
         category: category === "Uncategorized" ? null : category,
         date_from: from,
         date_to: to,
       })
-      .then(setTransactions);
+      .then(setTransactions)
+      .catch((err) => setError(String(err)));
   }, [category, from, to]);
 
+  if (error) {
+    return (
+      <p className="form-error" role="alert">
+        {error}
+      </p>
+    );
+  }
   if (!transactions) return <p className="muted">Loading…</p>;
   if (transactions.length === 0) {
     return <p className="muted">No transactions found.</p>;

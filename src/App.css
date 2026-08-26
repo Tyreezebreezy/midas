@@ -15,12 +15,12 @@
   --midas-bg: #f4f1e8;
   --midas-surface: #ffffff;
   --midas-border: #dcd6c4;
-  --midas-gold: #9c7a1e;
+  --midas-gold: #856716;
   --midas-text: #0b2418;
   --midas-text-muted: #4b5c52;
-  --midas-focus: #9c7a1e;
+  --midas-focus: #856716;
   --midas-negative: #b91c1c;
-  --midas-positive: #15803d;
+  --midas-positive: #137238;
 
   color: var(--midas-text);
   background: var(--midas-bg);
@@ -214,6 +214,7 @@ h1 {
 
 .accounts-toolbar-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 1.25rem;
 }
@@ -399,6 +400,7 @@ footer {
 
 .main-nav {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.25rem;
   padding: 0 clamp(1.5rem, 6vw, 4rem);
   border-bottom: 1px solid var(--midas-border);

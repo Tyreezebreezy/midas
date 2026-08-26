@@ -21,10 +21,13 @@ function RecurringPage() {
   const [detectMessage, setDetectMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    accountsApi.list(false).then((list) => {
-      setAccounts(list);
-      if (list.length > 0) setAccountId(list[0].id);
-    });
+    accountsApi
+      .list(false)
+      .then((list) => {
+        setAccounts(list);
+        if (list.length > 0) setAccountId(list[0].id);
+      })
+      .catch((err) => setError(String(err)));
   }, []);
 
   async function refresh() {

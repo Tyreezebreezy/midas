@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import "./App.css";
 import AccountsPage from "./AccountsPage";
+import BackupPage from "./BackupPage";
 import BudgetsPage from "./BudgetsPage";
 import NeedsReviewPage from "./NeedsReviewPage";
 import NetWorthPage from "./NetWorthPage";
@@ -32,7 +33,8 @@ type Tab =
   | "recurring"
   | "rules"
   | "review"
-  | "reports";
+  | "reports"
+  | "backup";
 
 const tabs: { id: Tab; label: string }[] = [
   { id: "overview", label: "Overview" },
@@ -47,6 +49,7 @@ const tabs: { id: Tab; label: string }[] = [
   { id: "rules", label: "Rules" },
   { id: "review", label: "Needs Review" },
   { id: "reports", label: "Reports" },
+  { id: "backup", label: "Backup" },
 ];
 
 function loadTheme(): ThemePreference {
@@ -131,6 +134,7 @@ function App() {
         {tab === "rules" && <RulesPage />}
         {tab === "review" && <NeedsReviewPage />}
         {tab === "reports" && <ReportsPage />}
+        {tab === "backup" && <BackupPage />}
       </main>
 
       <footer>

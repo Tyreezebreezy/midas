@@ -107,6 +107,7 @@ export const transactionsApi = {
   setArchived: (id: number, archived: boolean) =>
     invoke<Transaction>("set_transaction_archived", { id, archived }),
   delete: (id: number) => invoke<void>("delete_transaction", { id }),
+  exportCsv: () => invoke<string>("export_transactions_csv"),
 };
 
 // --- CSV import ---
@@ -470,4 +471,28 @@ export const reportsApi = {
     invoke<CategoryTotal[]>("get_spending_by_category", { from, to }),
   getIncomeVsSpendingTrend: () =>
     invoke<MonthlyFlow[]>("get_income_vs_spending_trend"),
+};
+
+// --- Backup and Restore (Phase 6) ---
+export interface BackupResult {
+  filename: string;
+  content_base64: string;
+  schema_version: number;
+  account_count: number;
+  transaction_count: number;
+}
+
+export interface RestoreValidation {
+  schema_version: number;
+  account_count: number;
+  transaction_count: number;
+  needs_migration: boolean;
+}
+
+export const backupApi = {
+  create: () => invoke<BackupResult>("create_backup_command"),
+  previewRestore: (contentBase64: string) =>
+    invoke<RestoreValidation>("preview_restore_command", { contentBase64 }),
+  restore: (contentBase64: string) =>
+    invoke<RestoreValidation>("restore_backup_command", { contentBase64 }),
 };
