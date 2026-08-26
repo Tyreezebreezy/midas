@@ -8,6 +8,7 @@ mod money;
 mod needs_review;
 mod recurring;
 mod rules;
+mod savings_goals;
 mod settings;
 mod transactions;
 
@@ -56,6 +57,10 @@ pub fn run() {
             budgets::create_budget,
             budgets::update_budget,
             budgets::delete_budget,
+            savings_goals::list_savings_goals,
+            savings_goals::create_savings_goal,
+            savings_goals::update_savings_goal,
+            savings_goals::set_savings_goal_archived,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Tauri application");
