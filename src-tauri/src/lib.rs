@@ -6,6 +6,7 @@ mod db;
 mod import;
 mod money;
 mod needs_review;
+mod pay_cycle;
 mod recurring;
 mod rules;
 mod savings_goals;
@@ -61,6 +62,10 @@ pub fn run() {
             savings_goals::create_savings_goal,
             savings_goals::update_savings_goal,
             savings_goals::set_savings_goal_archived,
+            pay_cycle::get_pay_schedule,
+            pay_cycle::set_pay_schedule,
+            pay_cycle::get_pay_cycle_summary,
+            pay_cycle::get_likely_income_series,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Tauri application");

@@ -1,7 +1,7 @@
 //! Monthly category budgets (Phase 4B). Deliberately not an envelope
 //! system - no rollover, no fund transfers between categories: one planned
 //! amount per category per month, compared against actual spending computed
-//! by `accounting::total_spending` (reused, not reimplemented, so budgets
+//! by `accounting::spending_in_range` (reused, not reimplemented, so budgets
 //! automatically exclude transfers and correctly net out refunds).
 
 use rusqlite::{params, Connection, OptionalExtension};
@@ -10,7 +10,6 @@ use tauri::State;
 
 use crate::accounting;
 use crate::db::DbState;
-use crate::transactions::TransactionType;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -138,26 +137,16 @@ fn duplicate_exists(
 const COLUMNS: &str =
     "id, category, month, planned_amount_cents, classification, created_at, updated_at";
 
-/// Sums `accounting::spending_effect` over every transaction in `category`
-/// within the calendar month containing `month` (a query direct against
-/// `transactions`, not `transactions::list`, so the whole call stays in
-/// `rusqlite::Result` and can be composed with `?` inside `hydrate`'s own
-/// `query_map` closure - reuses the actually-important logic, `spending_effect`,
-/// without a cross-module error-type mismatch).
+/// Actual spending for `category` within the calendar month containing
+/// `month` - delegates to `accounting::spending_in_range`, the one shared
+/// place "spending in a date range" is computed (also used by pay_cycle.rs).
 fn actual_spending_for(conn: &Connection, category: &str, month: &str) -> rusqlite::Result<i64> {
-    let month_start = crate::dates::start_of_month(month);
-    let month_end = crate::dates::end_of_month(month);
-    let mut stmt = conn.prepare(
-        "SELECT amount_cents, transaction_type FROM transactions
-         WHERE category = ?1 AND transaction_date >= ?2 AND transaction_date <= ?3 AND is_archived = 0",
-    )?;
-    let rows = stmt.query_map(params![category, month_start, month_end], |row| {
-        let amount_cents: i64 = row.get(0)?;
-        let transaction_type = TransactionType::from_sql_str(&row.get::<_, String>(1)?)?;
-        Ok(accounting::spending_effect(transaction_type, amount_cents))
-    })?;
-    rows.collect::<rusqlite::Result<Vec<i64>>>()
-        .map(|amounts| amounts.iter().sum())
+    accounting::spending_in_range(
+        conn,
+        Some(category),
+        &crate::dates::start_of_month(month),
+        &crate::dates::end_of_month(month),
+    )
 }
 
 fn hydrate(conn: &Connection, row: &rusqlite::Row) -> rusqlite::Result<Budget> {

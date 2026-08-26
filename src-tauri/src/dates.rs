@@ -71,6 +71,26 @@ pub fn end_of_month(date: &str) -> String {
     format_iso(NaiveDate::from_ymd_opt(d.year(), d.month(), last).expect("must be valid"))
 }
 
+/// Adds calendar months (may be negative), clamping the day to the target
+/// month's length - e.g. Jan 31 + 1 month -> Feb 28/29, not an overflow into
+/// March. The standard "same day next month" convention.
+pub fn add_months(date: &str, months: i64) -> String {
+    let d = expect_iso(date);
+    let total_months = d.year() as i64 * 12 + d.month0() as i64 + months;
+    let year = total_months.div_euclid(12) as i32;
+    let month = total_months.rem_euclid(12) as u32 + 1;
+    let day = d.day().min(days_in_month(year, month));
+    format_iso(NaiveDate::from_ymd_opt(year, month, day).expect("clamped date must be valid"))
+}
+
+/// Constructs `day` within the same month as `date_in_month`, clamped to
+/// that month's length - e.g. `day_in_month("2026-02-10", 31) == "2026-02-28"`.
+pub fn day_in_month(date_in_month: &str, day: u32) -> String {
+    let d = expect_iso(date_in_month);
+    let clamped = day.max(1).min(days_in_month(d.year(), d.month()));
+    format_iso(NaiveDate::from_ymd_opt(d.year(), d.month(), clamped).expect("must be valid"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -101,6 +121,29 @@ mod tests {
         assert_eq!(end_of_month("2026-02-01"), "2026-02-28");
         assert_eq!(end_of_month("2024-02-01"), "2024-02-29");
         assert_eq!(end_of_month("2026-12-01"), "2026-12-31");
+    }
+
+    #[test]
+    fn add_months_clamps_short_months_instead_of_overflowing() {
+        assert_eq!(add_months("2026-01-31", 1), "2026-02-28"); // 2026 not a leap year
+        assert_eq!(add_months("2024-01-31", 1), "2024-02-29"); // 2024 is
+        assert_eq!(add_months("2026-03-31", 1), "2026-04-30");
+    }
+
+    #[test]
+    fn add_months_crosses_year_boundaries_forward_and_backward() {
+        assert_eq!(add_months("2026-12-15", 1), "2027-01-15");
+        assert_eq!(add_months("2026-01-15", -1), "2025-12-15");
+        assert_eq!(add_months("2026-06-15", 12), "2027-06-15");
+        assert_eq!(add_months("2026-06-15", -18), "2024-12-15");
+    }
+
+    #[test]
+    fn day_in_month_clamps_to_the_target_months_length() {
+        assert_eq!(day_in_month("2026-02-10", 31), "2026-02-28");
+        assert_eq!(day_in_month("2024-02-10", 31), "2024-02-29");
+        assert_eq!(day_in_month("2026-08-10", 15), "2026-08-15");
+        assert_eq!(day_in_month("2026-08-10", 1), "2026-08-01");
     }
 
     #[test]

@@ -34,6 +34,47 @@ pub fn total_spending(transactions: &[Transaction]) -> i64 {
         .sum()
 }
 
+fn row_to_spending_effect(row: &rusqlite::Row) -> rusqlite::Result<i64> {
+    let amount_cents: i64 = row.get(0)?;
+    let transaction_type = TransactionType::from_sql_str(&row.get::<_, String>(1)?)?;
+    Ok(spending_effect(transaction_type, amount_cents))
+}
+
+/// Sums `spending_effect` over every transaction dated within `[from, to]`
+/// (inclusive), optionally scoped to one category - a query directly
+/// against `transactions` (not `transactions::list`) so it stays entirely
+/// in `rusqlite::Result` and composes with `?` inside a caller's own
+/// `query_map` closure if needed. The one shared place budgets, pay cycles,
+/// and Safe to Spend all read "spending in a date range" from, instead of
+/// each hand-rolling the same query.
+pub fn spending_in_range(
+    conn: &Connection,
+    category: Option<&str>,
+    from: &str,
+    to: &str,
+) -> rusqlite::Result<i64> {
+    let amounts: Vec<i64> = if let Some(cat) = category {
+        let mut stmt = conn.prepare(
+            "SELECT amount_cents, transaction_type FROM transactions
+             WHERE category = ?1 AND transaction_date >= ?2 AND transaction_date <= ?3 AND is_archived = 0",
+        )?;
+        let rows = stmt
+            .query_map(params![cat, from, to], row_to_spending_effect)?
+            .collect::<rusqlite::Result<Vec<i64>>>()?;
+        rows
+    } else {
+        let mut stmt = conn.prepare(
+            "SELECT amount_cents, transaction_type FROM transactions
+             WHERE transaction_date >= ?1 AND transaction_date <= ?2 AND is_archived = 0",
+        )?;
+        let rows = stmt
+            .query_map(params![from, to], row_to_spending_effect)?
+            .collect::<rusqlite::Result<Vec<i64>>>()?;
+        rows
+    };
+    Ok(amounts.iter().sum())
+}
+
 /// Net worth: included assets minus included liabilities - never a blind
 /// sum of every account balance regardless of type. ADR-0004's sign
 /// convention already makes a liability's balance "positive = owe more," so
@@ -607,5 +648,78 @@ mod tests {
         // Statement shows $250.00 owed today, more than the $100 MIDAS knows about.
         let account = reconcile_balance(&conn, card, 25_000, "2026-08-25").unwrap();
         assert_eq!(account.balance_cents, 25_000);
+    }
+
+    #[test]
+    fn spending_in_range_respects_the_date_bounds_and_optional_category() {
+        let conn = test_conn();
+        let checking = make_account(&conn, AccountType::Checking);
+        add_txn(
+            &conn,
+            checking,
+            "2026-08-05",
+            -5000,
+            TransactionType::Purchase,
+        );
+        add_txn(
+            &conn,
+            checking,
+            "2026-08-10",
+            -3000,
+            TransactionType::Transfer,
+        );
+        add_txn(
+            &conn,
+            checking,
+            "2026-09-01",
+            -9000,
+            TransactionType::Purchase,
+        ); // out of range
+
+        assert_eq!(
+            spending_in_range(&conn, None, "2026-08-01", "2026-08-31").unwrap(),
+            5000,
+            "the transfer must not count, and the September purchase is out of range"
+        );
+    }
+
+    #[test]
+    fn spending_in_range_category_filter_matches_budgets_own_scoping() {
+        let conn = test_conn();
+        let checking = make_account(&conn, AccountType::Checking);
+        crate::transactions::create(
+            &conn,
+            &crate::transactions::TransactionInput {
+                account_id: checking,
+                transaction_date: "2026-08-05".to_string(),
+                posted_date: None,
+                amount_cents: -4000,
+                transaction_type: TransactionType::Purchase,
+                raw_description: "Test".to_string(),
+                merchant: None,
+                category: Some("Dining".to_string()),
+                subcategory: None,
+                notes: None,
+                tags: None,
+                is_pending: None,
+            },
+        )
+        .unwrap();
+        add_txn(
+            &conn,
+            checking,
+            "2026-08-06",
+            -1000,
+            TransactionType::Purchase,
+        ); // category None
+
+        assert_eq!(
+            spending_in_range(&conn, Some("Dining"), "2026-08-01", "2026-08-31").unwrap(),
+            4000
+        );
+        assert_eq!(
+            spending_in_range(&conn, None, "2026-08-01", "2026-08-31").unwrap(),
+            5000
+        );
     }
 }
