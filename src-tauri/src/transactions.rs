@@ -175,7 +175,9 @@ fn row_to_transaction(row: &rusqlite::Row) -> rusqlite::Result<Transaction> {
     })
 }
 
-fn validate_and_normalize(input: &TransactionInput) -> Result<(String, String), TransactionError> {
+type NormalizedInput = (String, Option<String>, String);
+
+fn validate_and_normalize(input: &TransactionInput) -> Result<NormalizedInput, TransactionError> {
     if input.raw_description.trim().is_empty() {
         return Err(TransactionError::Validation(
             "Description is required.".to_string(),
@@ -188,21 +190,14 @@ fn validate_and_normalize(input: &TransactionInput) -> Result<(String, String), 
         }
         _ => None,
     };
-    let _ = posted; // validated below alongside date via caller when needed
-    Ok((date, input.raw_description.trim().to_string()))
+    Ok((date, posted, input.raw_description.trim().to_string()))
 }
 
 pub fn create(
     conn: &Connection,
     input: &TransactionInput,
 ) -> Result<Transaction, TransactionError> {
-    let (date, description) = validate_and_normalize(input)?;
-    let posted = match &input.posted_date {
-        Some(p) if !p.trim().is_empty() => {
-            Some(money::parse_date(p).map_err(TransactionError::Validation)?)
-        }
-        _ => None,
-    };
+    let (date, posted, description) = validate_and_normalize(input)?;
     let merchant = input
         .merchant
         .as_deref()
@@ -304,18 +299,80 @@ pub fn list(
         .map_err(TransactionError::from)
 }
 
+fn format_dollars(cents: i64) -> String {
+    let sign = if cents < 0 { "-" } else { "" };
+    let abs = cents.unsigned_abs();
+    format!("{sign}{}.{:02}", abs / 100, abs % 100)
+}
+
+/// Every non-archived transaction as CSV, newest first - the "don't get
+/// trapped inside MIDAS" export. Human-readable columns (account name,
+/// dollars not cents) rather than a raw table dump; not intended to round
+/// -trip back through the bank-CSV importer, which is deliberately fuzzy
+/// about column names and doesn't expect this exact shape.
+pub fn export_csv(conn: &Connection) -> Result<String, TransactionError> {
+    let mut stmt = conn.prepare(
+        "SELECT t.transaction_date, a.name, t.merchant, t.category, t.subcategory,
+                t.transaction_type, t.amount_cents, t.notes
+         FROM transactions t JOIN accounts a ON a.id = t.account_id
+         WHERE t.is_archived = 0
+         ORDER BY t.transaction_date DESC, t.id DESC",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, Option<String>>(3)?,
+            row.get::<_, Option<String>>(4)?,
+            row.get::<_, String>(5)?,
+            row.get::<_, i64>(6)?,
+            row.get::<_, Option<String>>(7)?,
+        ))
+    })?;
+
+    let mut writer = csv::WriterBuilder::new().from_writer(vec![]);
+    writer
+        .write_record([
+            "Date",
+            "Account",
+            "Merchant",
+            "Category",
+            "Subcategory",
+            "Type",
+            "Amount",
+            "Notes",
+        ])
+        .map_err(|e| TransactionError::Validation(e.to_string()))?;
+    for row in rows {
+        let (date, account, merchant, category, subcategory, transaction_type, amount_cents, notes) =
+            row?;
+        writer
+            .write_record([
+                date,
+                account,
+                merchant,
+                category.unwrap_or_default(),
+                subcategory.unwrap_or_default(),
+                transaction_type,
+                format_dollars(amount_cents),
+                notes.unwrap_or_default(),
+            ])
+            .map_err(|e| TransactionError::Validation(e.to_string()))?;
+    }
+
+    let bytes = writer
+        .into_inner()
+        .map_err(|e| TransactionError::Validation(e.to_string()))?;
+    String::from_utf8(bytes).map_err(|e| TransactionError::Validation(e.to_string()))
+}
+
 pub fn update(
     conn: &Connection,
     id: i64,
     input: &TransactionInput,
 ) -> Result<Transaction, TransactionError> {
-    let (date, description) = validate_and_normalize(input)?;
-    let posted = match &input.posted_date {
-        Some(p) if !p.trim().is_empty() => {
-            Some(money::parse_date(p).map_err(TransactionError::Validation)?)
-        }
-        _ => None,
-    };
+    let (date, posted, description) = validate_and_normalize(input)?;
     let merchant = input
         .merchant
         .as_deref()
@@ -397,6 +454,12 @@ pub fn list_transactions(
 ) -> Result<Vec<Transaction>, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     list(&conn, &filter).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn export_transactions_csv(state: State<DbState>) -> Result<String, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    export_csv(&conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -485,6 +548,47 @@ mod tests {
             tags: None,
             is_pending: None,
         }
+    }
+
+    #[test]
+    fn export_csv_includes_account_name_dollars_and_excludes_archived() {
+        let conn = test_conn();
+        let account_id = make_account(&conn, AccountType::Checking);
+        let created = create(&conn, &sample_input(account_id)).unwrap();
+
+        let archived_input = TransactionInput {
+            transaction_date: "2026-01-01".to_string(),
+            amount_cents: -100,
+            ..sample_input(account_id)
+        };
+        let archived = create(&conn, &archived_input).unwrap();
+        set_archived(&conn, archived.id, true).unwrap();
+
+        let csv = export_csv(&conn).unwrap();
+        assert!(csv.starts_with("Date,Account,Merchant,Category,Subcategory,Type,Amount,Notes"));
+        assert!(csv.contains("Test Account"));
+        assert!(
+            csv.contains("-50.00"),
+            "amount must be human-readable dollars, not cents: {csv}"
+        );
+        assert!(
+            !csv.contains("-1.00"),
+            "archived transactions must never appear in the export: {csv}"
+        );
+        assert_eq!(
+            csv.lines().count(),
+            2,
+            "header plus exactly one non-archived row"
+        );
+        let _ = created;
+    }
+
+    #[test]
+    fn format_dollars_handles_negative_zero_and_positive_cents_correctly() {
+        assert_eq!(format_dollars(-50000), "-500.00");
+        assert_eq!(format_dollars(0), "0.00");
+        assert_eq!(format_dollars(5), "0.05");
+        assert_eq!(format_dollars(-5), "-0.05");
     }
 
     #[test]

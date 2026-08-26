@@ -1,5 +1,6 @@
 mod accounting;
 mod accounts;
+mod backup;
 mod budgets;
 mod dates;
 mod db;
@@ -35,13 +36,12 @@ pub fn run() {
             accounts::create_account,
             accounts::update_account,
             accounts::set_account_archived,
-            settings::get_setting,
-            settings::set_setting,
             transactions::list_transactions,
             transactions::create_transaction,
             transactions::update_transaction,
             transactions::set_transaction_archived,
             transactions::delete_transaction,
+            transactions::export_transactions_csv,
             import::preview_csv,
             import::stage_import,
             import::commit_import,
@@ -76,6 +76,9 @@ pub fn run() {
             overview::get_overview,
             reports::get_spending_by_category,
             reports::get_income_vs_spending_trend,
+            backup::create_backup_command,
+            backup::preview_restore_command,
+            backup::restore_backup_command,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Tauri application");

@@ -553,17 +553,28 @@ pub fn commit(
             }
             RowStatus::ProbableDuplicate if !force_import.contains(&row.row_index) => {
                 sent_to_review += 1;
+                // duplicate_of_transaction_id should always be set for a
+                // ProbableDuplicate row, but the reason text must never
+                // fabricate a fake "#0" reference if that assumption is
+                // ever wrong somewhere upstream - an honest, slightly
+                // vaguer message beats a misleading specific one.
+                let reason = match row.duplicate_of_transaction_id {
+                    Some(existing_id) => format!(
+                        "Row {} matches an existing transaction on the same date for the same amount (possible duplicate of transaction #{existing_id}).",
+                        row.row_index + 1
+                    ),
+                    None => format!(
+                        "Row {} matches an existing transaction on the same date for the same amount.",
+                        row.row_index + 1
+                    ),
+                };
                 insert_review_item(
                     &tx,
                     "suspected_duplicate",
                     None,
                     Some(import_id),
                     row,
-                    &format!(
-                        "Row {} matches an existing transaction on the same date for the same amount (possible duplicate of transaction #{}).",
-                        row.row_index + 1,
-                        row.duplicate_of_transaction_id.unwrap_or(0)
-                    ),
+                    &reason,
                 )
                 .map_err(|e| e.to_string())?;
             }
