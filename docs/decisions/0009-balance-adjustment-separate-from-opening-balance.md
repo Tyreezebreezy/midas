@@ -31,7 +31,7 @@ The owner named this precisely: reconciling today must never change what the app
 ## Rationale against the requirement
 
 - **Historical net worth is now genuinely immutable once past**: `net_worth_as_of(date)` only ever sums transactions with `transaction_date <= date`; since a `balance_adjustment` is dated at its own reconciliation date rather than backdated, it structurally cannot appear in any `net_worth_as_of` call for a date before it happened. `net_worth_history_changes_only_from_the_adjustment_date_forward` proves this directly.
-- **Today's balance is still exactly correct**: the adjustment still lands in `SUM(amount_cents)` like every other transaction, so `balance_of` reflects the correction immediately - only the *history* is protected, not the *current* number.
+- **Today's balance is still exactly correct**: the adjustment still lands in `SUM(amount_cents)` like every other transaction, so `balance_of` reflects the correction immediately - only the _history_ is protected, not the _current_ number.
 - **No new schema concept**: this is one more `transaction_type` value and one more partial unique index, the same shape ADR-0007 already established - not a new table, not a new command, not a parallel reconciliation subsystem.
 
 ## Consequences and accepted tradeoffs
