@@ -82,6 +82,20 @@ pub fn spending_in_range(
     Ok(amounts.iter().sum())
 }
 
+/// Total income in a date range - the mirror of `spending_in_range` for the
+/// Overview/Reports "income vs spending" comparison, which `spending_effect`
+/// deliberately excludes income from (income isn't spending). Income is
+/// already stored as a positive `amount_cents` per ADR-0004's sign
+/// convention, so this is a plain sum, no per-row classification needed.
+pub fn income_in_range(conn: &Connection, from: &str, to: &str) -> rusqlite::Result<i64> {
+    conn.query_row(
+        "SELECT COALESCE(SUM(amount_cents), 0) FROM transactions
+         WHERE transaction_type = 'income' AND transaction_date >= ?1 AND transaction_date <= ?2 AND is_archived = 0",
+        params![from, to],
+        |row| row.get(0),
+    )
+}
+
 /// Net worth: included assets minus included liabilities - never a blind
 /// sum of every account balance regardless of type. ADR-0004's sign
 /// convention already makes a liability's balance "positive = owe more," so
@@ -901,6 +915,39 @@ mod tests {
             spending_in_range(&conn, None, "2026-08-01", "2026-08-31").unwrap(),
             5000,
             "the transfer must not count, and the September purchase is out of range"
+        );
+    }
+
+    #[test]
+    fn income_in_range_sums_only_income_within_the_date_bounds() {
+        let conn = test_conn();
+        let checking = make_account(&conn, AccountType::Checking);
+        add_txn(
+            &conn,
+            checking,
+            "2026-08-01",
+            200_000,
+            TransactionType::Income,
+        );
+        add_txn(
+            &conn,
+            checking,
+            "2026-08-15",
+            -5000,
+            TransactionType::Purchase,
+        );
+        add_txn(
+            &conn,
+            checking,
+            "2026-09-01",
+            200_000,
+            TransactionType::Income,
+        ); // out of range
+
+        assert_eq!(
+            income_in_range(&conn, "2026-08-01", "2026-08-31").unwrap(),
+            200_000,
+            "the purchase must not count, and September's income is out of range"
         );
     }
 

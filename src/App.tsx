@@ -4,8 +4,10 @@ import AccountsPage from "./AccountsPage";
 import BudgetsPage from "./BudgetsPage";
 import NeedsReviewPage from "./NeedsReviewPage";
 import NetWorthPage from "./NetWorthPage";
+import OverviewPage from "./OverviewPage";
 import PayCyclePage from "./PayCyclePage";
 import RecurringPage from "./RecurringPage";
+import ReportsPage from "./ReportsPage";
 import RulesPage from "./RulesPage";
 import SafeToSpendPage from "./SafeToSpendPage";
 import SavingsGoalsPage from "./SavingsGoalsPage";
@@ -19,6 +21,7 @@ import {
 const themeOptions: ThemePreference[] = ["system", "light", "dark"];
 
 type Tab =
+  | "overview"
   | "accounts"
   | "transactions"
   | "budgets"
@@ -28,9 +31,11 @@ type Tab =
   | "networth"
   | "recurring"
   | "rules"
-  | "review";
+  | "review"
+  | "reports";
 
 const tabs: { id: Tab; label: string }[] = [
+  { id: "overview", label: "Overview" },
   { id: "accounts", label: "Accounts" },
   { id: "transactions", label: "Transactions" },
   { id: "budgets", label: "Budgets" },
@@ -41,6 +46,7 @@ const tabs: { id: Tab; label: string }[] = [
   { id: "recurring", label: "Recurring & Bills" },
   { id: "rules", label: "Rules" },
   { id: "review", label: "Needs Review" },
+  { id: "reports", label: "Reports" },
 ];
 
 function loadTheme(): ThemePreference {
@@ -53,7 +59,7 @@ function loadTheme(): ThemePreference {
 
 function App() {
   const [theme, setTheme] = useState(loadTheme);
-  const [tab, setTab] = useState<Tab>("accounts");
+  const [tab, setTab] = useState<Tab>("overview");
 
   useEffect(() => {
     const systemDark = window.matchMedia("(prefers-color-scheme: dark)");
@@ -113,6 +119,7 @@ function App() {
       </nav>
 
       <main>
+        {tab === "overview" && <OverviewPage />}
         {tab === "accounts" && <AccountsPage />}
         {tab === "transactions" && <TransactionsPage />}
         {tab === "budgets" && <BudgetsPage />}
@@ -123,6 +130,7 @@ function App() {
         {tab === "recurring" && <RecurringPage />}
         {tab === "rules" && <RulesPage />}
         {tab === "review" && <NeedsReviewPage />}
+        {tab === "reports" && <ReportsPage />}
       </main>
 
       <footer>

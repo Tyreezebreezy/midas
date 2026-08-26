@@ -432,3 +432,42 @@ export const safeToSpendApi = {
   setReserve: (cents: number) =>
     invoke<void>("set_safe_to_spend_reserve", { cents }),
 };
+
+// --- Overview (Phase 5) ---
+export interface OverviewResult {
+  safe_to_spend: SafeToSpendResult;
+  upcoming_bills: RecurringSeries[];
+  pay_cycle: CycleSummary | null;
+  needs_review_count: number;
+  needs_review_items: NeedsReviewItem[];
+  savings_goals: SavingsGoal[];
+  net_worth: NetWorthBreakdown;
+  budget_health: Budget[];
+  recent_transactions: Transaction[];
+  income_this_month_cents: number;
+  spending_this_month_cents: number;
+  net_worth_trend: NetWorthPoint[];
+}
+
+export const overviewApi = {
+  get: () => invoke<OverviewResult>("get_overview"),
+};
+
+// --- Reports and Trends (Phase 5) ---
+export interface CategoryTotal {
+  category: string;
+  spent_cents: number;
+}
+
+export interface MonthlyFlow {
+  month: string;
+  income_cents: number;
+  spending_cents: number;
+}
+
+export const reportsApi = {
+  getSpendingByCategory: (from: string, to: string) =>
+    invoke<CategoryTotal[]>("get_spending_by_category", { from, to }),
+  getIncomeVsSpendingTrend: () =>
+    invoke<MonthlyFlow[]>("get_income_vs_spending_trend"),
+};

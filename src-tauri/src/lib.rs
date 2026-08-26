@@ -6,8 +6,10 @@ mod db;
 mod import;
 mod money;
 mod needs_review;
+mod overview;
 mod pay_cycle;
 mod recurring;
+mod reports;
 mod rules;
 mod safe_to_spend;
 mod savings_goals;
@@ -71,6 +73,9 @@ pub fn run() {
             safe_to_spend::get_safe_to_spend,
             safe_to_spend::get_safe_to_spend_reserve,
             safe_to_spend::set_safe_to_spend_reserve,
+            overview::get_overview,
+            reports::get_spending_by_category,
+            reports::get_income_vs_spending_trend,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Tauri application");

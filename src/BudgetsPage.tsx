@@ -7,6 +7,13 @@ import {
   formatCents,
   parseDollarsToCents,
 } from "./lib/currency";
+import {
+  currentMonthValue,
+  isoToMonthValue,
+  monthRange,
+  monthToIso,
+  shiftMonth,
+} from "./lib/monthValue";
 
 const CLASSIFICATION_LABELS: Record<BudgetClassification, string> = {
   fixed: "Fixed",
@@ -18,24 +25,6 @@ const STATUS_LABELS: Record<Budget["status"], string> = {
   near: "Near limit",
   over: "Over budget",
 };
-
-function currentMonthValue(): string {
-  return new Date().toISOString().slice(0, 7); // YYYY-MM
-}
-
-function monthToIso(monthValue: string): string {
-  return `${monthValue}-01`;
-}
-
-function isoToMonthValue(monthIso: string): string {
-  return monthIso.slice(0, 7);
-}
-
-function shiftMonth(monthValue: string, delta: number): string {
-  const [year, month] = monthValue.split("-").map(Number);
-  const d = new Date(Date.UTC(year, month - 1 + delta, 1));
-  return d.toISOString().slice(0, 7);
-}
 
 function BudgetForm({
   monthValue,
@@ -183,15 +172,6 @@ function BudgetForm({
       </form>
     </dialog>
   );
-}
-
-function monthRange(monthValue: string): { from: string; to: string } {
-  const [year, month] = monthValue.split("-").map(Number);
-  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  return {
-    from: monthToIso(monthValue),
-    to: `${monthValue}-${String(lastDay).padStart(2, "0")}`,
-  };
 }
 
 function BudgetsPage() {

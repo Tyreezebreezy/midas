@@ -250,6 +250,23 @@ pub(crate) fn obligations_before(
         .sum())
 }
 
+/// The confirmed recurring bills soonest due, for the Overview's "Upcoming
+/// Bills" widget - the same definition of "bill" `obligations_before` sums
+/// (confirmed, negative expected amount), just returned as the list itself
+/// rather than a total, capped to `limit` for a glanceable screen.
+pub(crate) fn upcoming_bills(
+    conn: &Connection,
+    limit: usize,
+) -> Result<Vec<RecurringSeries>, PayCycleError> {
+    let mut series: Vec<RecurringSeries> = active_account_series(conn)?
+        .into_iter()
+        .filter(|s| s.status == SeriesStatus::Confirmed && s.expected_amount_cents < 0)
+        .collect();
+    series.sort_by(|a, b| a.next_expected_date.cmp(&b.next_expected_date));
+    series.truncate(limit);
+    Ok(series)
+}
+
 /// Confirmed or proposed recurring patterns that look like income (a
 /// positive amount, per ADR-0004 - money increasing the account's own
 /// balance), for the frontend to offer as a one-click pay-schedule
@@ -572,6 +589,47 @@ mod tests {
         // positive obligation despite the bill's own amount being negative.
         assert_eq!(obligations_before(&conn, "2026-09-04").unwrap(), 999);
         assert_eq!(obligations_before(&conn, "2026-09-10").unwrap(), 999);
+    }
+
+    #[test]
+    fn upcoming_bills_returns_confirmed_bills_soonest_due_first_capped_to_limit() {
+        let conn = test_conn();
+        let account = make_account(&conn);
+
+        add_txn(&conn, account, "2026-06-05", -999, "Streaming Service");
+        add_txn(&conn, account, "2026-07-05", -999, "Streaming Service");
+        add_txn(&conn, account, "2026-08-05", -999, "Streaming Service");
+        add_txn(&conn, account, "2026-06-10", -5000, "Rent");
+        add_txn(&conn, account, "2026-07-10", -5000, "Rent");
+        add_txn(&conn, account, "2026-08-10", -5000, "Rent");
+        add_txn(&conn, account, "2026-06-01", 250000, "ACME Payroll");
+        add_txn(&conn, account, "2026-06-15", 250000, "ACME Payroll");
+        add_txn(&conn, account, "2026-06-29", 250000, "ACME Payroll");
+
+        for candidate in recurring::detect_candidates(&conn, account).unwrap() {
+            if candidate.expected_amount_cents < 0 {
+                recurring::confirm(&conn, candidate.id).unwrap();
+            }
+            // Payroll is left proposed - income must never appear as a bill.
+        }
+
+        let bills = upcoming_bills(&conn, 10).unwrap();
+        assert_eq!(
+            bills.len(),
+            2,
+            "only the two confirmed bills, never the proposed income series"
+        );
+        assert!(bills.iter().all(|b| b.expected_amount_cents < 0));
+        assert!(
+            bills[0].next_expected_date <= bills[1].next_expected_date,
+            "soonest due must come first"
+        );
+
+        assert_eq!(
+            upcoming_bills(&conn, 1).unwrap().len(),
+            1,
+            "must respect the cap"
+        );
     }
 
     #[test]
