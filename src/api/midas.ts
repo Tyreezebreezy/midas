@@ -362,3 +362,32 @@ export const savingsGoalsApi = {
   setArchived: (id: number, archived: boolean) =>
     invoke<SavingsGoal>("set_savings_goal_archived", { id, archived }),
 };
+
+// --- Pay Cycle (Phase 4B) ---
+export type PaySchedule =
+  | { schedule_type: "weekly"; anchor_date: string }
+  | { schedule_type: "biweekly"; anchor_date: string }
+  | { schedule_type: "monthly"; day_of_month: number }
+  | {
+      schedule_type: "semimonthly";
+      day_of_month_1: number;
+      day_of_month_2: number;
+    };
+
+export interface CycleSummary {
+  schedule: PaySchedule;
+  cycle_start: string;
+  next_payday: string;
+  spending_this_cycle_cents: number;
+  obligations_before_payday_cents: number;
+  prior_cycle_spending_cents: number;
+}
+
+export const payCycleApi = {
+  getSchedule: () => invoke<PaySchedule | null>("get_pay_schedule"),
+  setSchedule: (schedule: PaySchedule) =>
+    invoke<void>("set_pay_schedule", { schedule }),
+  getSummary: () => invoke<CycleSummary | null>("get_pay_cycle_summary"),
+  getLikelyIncomeSeries: () =>
+    invoke<RecurringSeries[]>("get_likely_income_series"),
+};
