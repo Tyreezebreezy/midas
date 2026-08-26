@@ -9,6 +9,7 @@ mod needs_review;
 mod pay_cycle;
 mod recurring;
 mod rules;
+mod safe_to_spend;
 mod savings_goals;
 mod settings;
 mod transactions;
@@ -66,6 +67,9 @@ pub fn run() {
             pay_cycle::set_pay_schedule,
             pay_cycle::get_pay_cycle_summary,
             pay_cycle::get_likely_income_series,
+            safe_to_spend::get_safe_to_spend,
+            safe_to_spend::get_safe_to_spend_reserve,
+            safe_to_spend::set_safe_to_spend_reserve,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Tauri application");

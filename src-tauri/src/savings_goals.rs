@@ -160,6 +160,14 @@ pub fn list(conn: &Connection, include_archived: bool) -> Result<Vec<SavingsGoal
         .map_err(GoalError::from)
 }
 
+/// Sum of every non-archived goal's `reserved_amount_cents` - the "how
+/// much has the owner explicitly protected from Safe to Spend" total. A
+/// goal with no reservation set contributes nothing.
+pub fn total_reserved(conn: &Connection) -> Result<i64, GoalError> {
+    let goals = list(conn, false)?;
+    Ok(goals.iter().filter_map(|g| g.reserved_amount_cents).sum())
+}
+
 pub fn create(conn: &Connection, input: &SavingsGoalInput) -> Result<SavingsGoal, GoalError> {
     validate(input)?;
     let target_date = input
@@ -411,5 +419,31 @@ mod tests {
             set_archived(&conn, 999, true),
             Err(GoalError::NotFound(999))
         ));
+    }
+
+    #[test]
+    fn total_reserved_sums_only_reserved_non_archived_goals() {
+        let conn = test_conn();
+        let mut reserved = sample_input();
+        reserved.reserved_amount_cents = Some(50_000);
+        create(&conn, &reserved).unwrap();
+
+        let mut unreserved = sample_input();
+        unreserved.name = "Unreserved".to_string();
+        create(&conn, &unreserved).unwrap();
+
+        let mut also_reserved = sample_input();
+        also_reserved.name = "Also Reserved".to_string();
+        also_reserved.reserved_amount_cents = Some(20_000);
+        let to_archive = create(&conn, &also_reserved).unwrap();
+
+        assert_eq!(total_reserved(&conn).unwrap(), 70_000);
+
+        set_archived(&conn, to_archive.id, true).unwrap();
+        assert_eq!(
+            total_reserved(&conn).unwrap(),
+            50_000,
+            "an archived goal's reservation must stop counting"
+        );
     }
 }
