@@ -3,6 +3,7 @@ import "./App.css";
 import AccountsPage from "./AccountsPage";
 import BudgetsPage from "./BudgetsPage";
 import NeedsReviewPage from "./NeedsReviewPage";
+import NetWorthPage from "./NetWorthPage";
 import PayCyclePage from "./PayCyclePage";
 import RecurringPage from "./RecurringPage";
 import RulesPage from "./RulesPage";
@@ -24,6 +25,7 @@ type Tab =
   | "goals"
   | "paycycle"
   | "safetospend"
+  | "networth"
   | "recurring"
   | "rules"
   | "review";
@@ -35,6 +37,7 @@ const tabs: { id: Tab; label: string }[] = [
   { id: "goals", label: "Savings Goals" },
   { id: "paycycle", label: "Pay Cycle" },
   { id: "safetospend", label: "Safe to Spend" },
+  { id: "networth", label: "Net Worth" },
   { id: "recurring", label: "Recurring & Bills" },
   { id: "rules", label: "Rules" },
   { id: "review", label: "Needs Review" },
@@ -116,6 +119,7 @@ function App() {
         {tab === "goals" && <SavingsGoalsPage />}
         {tab === "paycycle" && <PayCyclePage />}
         {tab === "safetospend" && <SafeToSpendPage />}
+        {tab === "networth" && <NetWorthPage />}
         {tab === "recurring" && <RecurringPage />}
         {tab === "rules" && <RulesPage />}
         {tab === "review" && <NeedsReviewPage />}

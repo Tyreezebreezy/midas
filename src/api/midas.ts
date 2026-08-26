@@ -281,6 +281,17 @@ export const recurringApi = {
 };
 
 // --- Accounting boundary (Phase 4A, ADR-0007) ---
+export interface NetWorthBreakdown {
+  total_assets_cents: number;
+  total_liabilities_cents: number;
+  net_worth_cents: number;
+}
+
+export interface NetWorthPoint {
+  as_of_date: string;
+  net_worth_cents: number;
+}
+
 export const accountingApi = {
   reconcileBalance: (
     accountId: number,
@@ -292,7 +303,8 @@ export const accountingApi = {
       knownCurrentBalanceCents,
       asOfDate,
     }),
-  getNetWorth: () => invoke<number>("get_net_worth"),
+  getNetWorth: () => invoke<NetWorthBreakdown>("get_net_worth"),
+  getNetWorthHistory: () => invoke<NetWorthPoint[]>("get_net_worth_history"),
   getTotalSpending: (filter: TransactionFilter) =>
     invoke<number>("get_total_spending", { filter }),
 };
