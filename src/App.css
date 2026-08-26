@@ -167,6 +167,19 @@ h1 {
   color: var(--midas-text-muted);
 }
 
+.goal-progress-track {
+  background: var(--midas-border);
+  border-radius: 4px;
+  height: 8px;
+  margin: 0.5rem 0;
+  overflow: hidden;
+}
+
+.goal-progress-fill {
+  background: var(--midas-gold);
+  height: 100%;
+}
+
 .form-error {
   margin: 0 0 1rem;
   color: var(--midas-negative);

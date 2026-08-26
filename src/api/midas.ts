@@ -327,3 +327,38 @@ export const budgetsApi = {
     invoke<Budget>("update_budget", { id, input }),
   delete: (id: number) => invoke<void>("delete_budget", { id }),
 };
+
+// --- Savings Goals (Phase 4B) ---
+export type GoalStatus = "in_progress" | "completed" | "overdue";
+
+export interface SavingsGoal {
+  id: number;
+  name: string;
+  target_amount_cents: number;
+  current_amount_cents: number;
+  target_date: string | null;
+  reserved_amount_cents: number | null;
+  is_archived: boolean;
+  created_at: string;
+  updated_at: string;
+  status: GoalStatus;
+}
+
+export interface SavingsGoalInput {
+  name: string;
+  target_amount_cents: number;
+  current_amount_cents: number;
+  target_date: string | null;
+  reserved_amount_cents: number | null;
+}
+
+export const savingsGoalsApi = {
+  list: (includeArchived: boolean) =>
+    invoke<SavingsGoal[]>("list_savings_goals", { includeArchived }),
+  create: (input: SavingsGoalInput) =>
+    invoke<SavingsGoal>("create_savings_goal", { input }),
+  update: (id: number, input: SavingsGoalInput) =>
+    invoke<SavingsGoal>("update_savings_goal", { id, input }),
+  setArchived: (id: number, archived: boolean) =>
+    invoke<SavingsGoal>("set_savings_goal_archived", { id, archived }),
+};

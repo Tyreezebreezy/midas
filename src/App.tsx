@@ -5,6 +5,7 @@ import BudgetsPage from "./BudgetsPage";
 import NeedsReviewPage from "./NeedsReviewPage";
 import RecurringPage from "./RecurringPage";
 import RulesPage from "./RulesPage";
+import SavingsGoalsPage from "./SavingsGoalsPage";
 import TransactionsPage from "./TransactionsPage";
 import {
   parseThemePreference,
@@ -15,12 +16,19 @@ import {
 const themeOptions: ThemePreference[] = ["system", "light", "dark"];
 
 type Tab =
-  "accounts" | "transactions" | "budgets" | "recurring" | "rules" | "review";
+  | "accounts"
+  | "transactions"
+  | "budgets"
+  | "goals"
+  | "recurring"
+  | "rules"
+  | "review";
 
 const tabs: { id: Tab; label: string }[] = [
   { id: "accounts", label: "Accounts" },
   { id: "transactions", label: "Transactions" },
   { id: "budgets", label: "Budgets" },
+  { id: "goals", label: "Savings Goals" },
   { id: "recurring", label: "Recurring & Bills" },
   { id: "rules", label: "Rules" },
   { id: "review", label: "Needs Review" },
@@ -99,6 +107,7 @@ function App() {
         {tab === "accounts" && <AccountsPage />}
         {tab === "transactions" && <TransactionsPage />}
         {tab === "budgets" && <BudgetsPage />}
+        {tab === "goals" && <SavingsGoalsPage />}
         {tab === "recurring" && <RecurringPage />}
         {tab === "rules" && <RulesPage />}
         {tab === "review" && <NeedsReviewPage />}
