@@ -1,27 +1,12 @@
 import { useEffect, useState } from "react";
-import type { OverviewResult, PaySchedule } from "./api/midas";
+import type { Tab } from "./App";
+import type { OverviewResult } from "./api/midas";
 import { overviewApi } from "./api/midas";
 import { formatCents } from "./lib/currency";
+import { SCHEDULE_TYPE_LABELS } from "./PayCycleSettings";
 import { TRANSACTION_TYPE_LABELS } from "./lib/transactionTypes";
 
-const SCHEDULE_TYPE_LABELS: Record<PaySchedule["schedule_type"], string> = {
-  weekly: "Weekly",
-  biweekly: "Every 2 weeks",
-  monthly: "Monthly",
-  semimonthly: "Twice a month",
-};
-
-const monthFormatter = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  year: "numeric",
-  timeZone: "UTC",
-});
-
-function monthLabel(isoDate: string): string {
-  return monthFormatter.format(new Date(isoDate));
-}
-
-function OverviewPage() {
+function OverviewPage({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
   const [overview, setOverview] = useState<OverviewResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -60,30 +45,89 @@ function OverviewPage() {
     <section aria-labelledby="overview-heading">
       <h1 id="overview-heading">Overview</h1>
 
-      <div className="overview-grid overview-grid-primary">
-        <div className="overview-card">
-          <h2>Safe to spend</h2>
-          {sts.status === "complete" ? (
-            <>
-              <p className="headline-number">
-                {formatCents(sts.safe_to_spend_cents)}
-              </p>
-              <p className="muted">Next payday {sts.next_payday}</p>
-            </>
-          ) : (
-            <>
-              <p className="headline-number">
-                {formatCents(sts.eligible_cash_cents)}
-              </p>
-              <p className="muted">{sts.reason}</p>
-            </>
-          )}
-        </div>
+      <div className="overview-hero">
+        <h2>Safe to spend</h2>
+        {sts.status === "complete" ? (
+          <>
+            <p className="hero-number">
+              {formatCents(sts.safe_to_spend_cents)}
+            </p>
+            <p className="muted">Until your next payday, {sts.next_payday}</p>
+            <p className="hero-summary-line">
+              {formatCents(sts.eligible_cash_cents)} cash −{" "}
+              {formatCents(sts.obligations_before_payday_cents)} bills −{" "}
+              {formatCents(
+                sts.reserved_goal_commitments_cents +
+                  sts.owner_required_reserve_cents,
+              )}{" "}
+              reserved
+            </p>
+            <details className="hero-breakdown">
+              <summary>View breakdown</summary>
+              <div className="table-scroll">
+                <table className="accounts-table">
+                  <tbody>
+                    <tr>
+                      <td>Eligible cash</td>
+                      <td className="col-balance">
+                        {formatCents(sts.eligible_cash_cents)}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>− Obligations before payday</td>
+                      <td className="col-balance">
+                        {formatCents(sts.obligations_before_payday_cents)}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>− Reserved for savings goals</td>
+                      <td className="col-balance">
+                        {formatCents(sts.reserved_goal_commitments_cents)}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>− Your required reserve</td>
+                      <td className="col-balance">
+                        {formatCents(sts.owner_required_reserve_cents)}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>
+                        <strong>= Safe to Spend</strong>
+                      </td>
+                      <td className="col-balance">
+                        <strong>{formatCents(sts.safe_to_spend_cents)}</strong>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          </>
+        ) : (
+          <>
+            <p className="hero-number">
+              {formatCents(sts.eligible_cash_cents)}
+            </p>
+            <p className="muted">Eligible cash - no pay schedule set yet</p>
+            <p className="hero-summary-line">
+              <button
+                type="button"
+                className="btn-link"
+                onClick={() => onNavigate("settings")}
+              >
+                Set your pay schedule →
+              </button>
+            </p>
+          </>
+        )}
+      </div>
 
+      <div className="overview-grid overview-grid-primary">
         <div className="overview-card">
           <h2>Upcoming bills</h2>
           {overview.upcoming_bills.length === 0 ? (
-            <p className="overview-card-empty">No confirmed bills yet.</p>
+            <p className="overview-card-empty">No upcoming bills.</p>
           ) : (
             <ul className="overview-mini-list">
               {overview.upcoming_bills.map((bill) => (
@@ -112,13 +156,18 @@ function OverviewPage() {
                   SCHEDULE_TYPE_LABELS[
                     overview.pay_cycle.schedule.schedule_type
                   ]
-                }{" "}
-                · cycle started {overview.pay_cycle.cycle_start}
+                }
               </p>
             </>
           ) : (
             <p className="overview-card-empty">
-              No pay schedule set yet - configure one on the Pay Cycle page.
+              <button
+                type="button"
+                className="btn-link"
+                onClick={() => onNavigate("settings")}
+              >
+                Set your pay schedule →
+              </button>
             </p>
           )}
         </div>
@@ -133,8 +182,13 @@ function OverviewPage() {
               ? `${formatCents(overview.pay_cycle.spending_this_cycle_cents)} this pay cycle`
               : "This month so far"}
           </p>
+          <p className="muted">
+            Income this month: {formatCents(overview.income_this_month_cents)}
+          </p>
         </div>
+      </div>
 
+      <div className="overview-grid">
         <div className="overview-card">
           <h2>Needs review</h2>
           <p className="headline-number">{overview.needs_review_count}</p>
@@ -154,7 +208,15 @@ function OverviewPage() {
         <div className="overview-card">
           <h2>Savings goals</h2>
           {overview.savings_goals.length === 0 ? (
-            <p className="overview-card-empty">No active goals yet.</p>
+            <p className="overview-card-empty">
+              <button
+                type="button"
+                className="btn-link"
+                onClick={() => onNavigate("goals")}
+              >
+                Set a savings goal →
+              </button>
+            </p>
           ) : (
             <ul className="overview-mini-list">
               {overview.savings_goals.map((goal) => (
@@ -172,44 +234,36 @@ function OverviewPage() {
       </div>
 
       <h2 className="section-heading">Cash position and net worth</h2>
-      <div className="table-scroll">
-        <table className="accounts-table">
-          <tbody>
-            <tr>
-              <td>Eligible cash</td>
-              <td className="col-balance">
-                {formatCents(sts.eligible_cash_cents)}
-              </td>
-            </tr>
-            <tr>
-              <td>Total assets</td>
-              <td className="col-balance">
-                {formatCents(overview.net_worth.total_assets_cents)}
-              </td>
-            </tr>
-            <tr>
-              <td>Total liabilities</td>
-              <td className="col-balance">
-                {formatCents(overview.net_worth.total_liabilities_cents)}
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <strong>Net worth</strong>
-              </td>
-              <td className="col-balance">
-                <strong>
-                  {formatCents(overview.net_worth.net_worth_cents)}
-                </strong>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <dl className="stat-strip">
+        <div className="stat-strip-item">
+          <dt>Eligible cash</dt>
+          <dd>{formatCents(sts.eligible_cash_cents)}</dd>
+        </div>
+        <div className="stat-strip-item">
+          <dt>Total assets</dt>
+          <dd>{formatCents(overview.net_worth.total_assets_cents)}</dd>
+        </div>
+        <div className="stat-strip-item">
+          <dt>Total liabilities</dt>
+          <dd>{formatCents(overview.net_worth.total_liabilities_cents)}</dd>
+        </div>
+        <div className="stat-strip-item">
+          <dt>Net worth</dt>
+          <dd>{formatCents(overview.net_worth.net_worth_cents)}</dd>
+        </div>
+      </dl>
 
       <h2 className="section-heading">Budget health</h2>
       {overview.budget_health.length === 0 ? (
-        <p className="muted">No budgets set for this month yet.</p>
+        <p className="muted">
+          <button
+            type="button"
+            className="btn-link"
+            onClick={() => onNavigate("budgets")}
+          >
+            Set up a budget →
+          </button>
+        </p>
       ) : (
         <div className="table-scroll">
           <table className="accounts-table">
@@ -250,46 +304,6 @@ function OverviewPage() {
           </table>
         </div>
       )}
-
-      <h2 className="section-heading">Income vs. spending this month</h2>
-      <div className="table-scroll">
-        <table className="accounts-table">
-          <tbody>
-            <tr>
-              <td>Income</td>
-              <td className="col-balance">
-                <span className="amount-positive">
-                  {formatCents(overview.income_this_month_cents)}
-                </span>
-              </td>
-            </tr>
-            <tr>
-              <td>Spending</td>
-              <td className="col-balance">
-                <span className="amount-owed">
-                  {formatCents(overview.spending_this_month_cents)}
-                </span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <h2 className="section-heading">Net worth, last 6 months</h2>
-      <div className="table-scroll">
-        <table className="accounts-table">
-          <tbody>
-            {overview.net_worth_trend.map((point) => (
-              <tr key={point.as_of_date}>
-                <td>{monthLabel(point.as_of_date)}</td>
-                <td className="col-balance">
-                  {formatCents(point.net_worth_cents)}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
 
       <h2 className="section-heading">Recent transactions</h2>
       {overview.recent_transactions.length === 0 ? (

@@ -93,7 +93,7 @@ function RecurringPage() {
   return (
     <section aria-labelledby="recurring-heading">
       <div className="accounts-toolbar">
-        <h1 id="recurring-heading">Recurring &amp; Bills</h1>
+        <h1 id="recurring-heading">Bills</h1>
         <div className="accounts-toolbar-actions">
           <select
             value={accountId}
@@ -130,46 +130,9 @@ function RecurringPage() {
         <p className="muted">Loading…</p>
       ) : (
         <>
-          <h2 className="section-heading">Proposed</h2>
-          {proposed.length === 0 ? (
-            <p className="muted">
-              Nothing pending. Run "Detect recurring" after you've imported a
-              few months of history.
-            </p>
-          ) : (
-            <ul className="review-list">
-              {proposed.map((s) => (
-                <li key={s.id} className="review-item">
-                  <div className="review-item-header">
-                    <strong>{s.merchant}</strong>
-                    <span className="muted">{CADENCE_LABELS[s.cadence]}</span>
-                    <span>{formatCents(s.expected_amount_cents)}</span>
-                  </div>
-                  <p className="muted">Next expected {s.next_expected_date}</p>
-                  <div className="review-item-actions">
-                    <button
-                      type="button"
-                      className="btn-link"
-                      onClick={() => handleConfirm(s.id)}
-                    >
-                      Confirm
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-link"
-                      onClick={() => handleReject(s.id)}
-                    >
-                      Reject
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-
           <h2 className="section-heading">Upcoming bills</h2>
           {confirmed.length === 0 ? (
-            <p className="muted">No confirmed recurring bills yet.</p>
+            <p className="muted">No confirmed bills yet.</p>
           ) : (
             <div className="table-scroll">
               <table className="accounts-table">
@@ -214,6 +177,43 @@ function RecurringPage() {
                 </tbody>
               </table>
             </div>
+          )}
+
+          <h2 className="section-heading">Proposed</h2>
+          {proposed.length === 0 ? (
+            <p className="muted">
+              Nothing pending. Run "Detect recurring" after you've imported a
+              few months of history.
+            </p>
+          ) : (
+            <ul className="review-list">
+              {proposed.map((s) => (
+                <li key={s.id} className="review-item">
+                  <div className="review-item-header">
+                    <strong>{s.merchant}</strong>
+                    <span className="muted">{CADENCE_LABELS[s.cadence]}</span>
+                    <span>{formatCents(s.expected_amount_cents)}</span>
+                  </div>
+                  <p className="muted">Next expected {s.next_expected_date}</p>
+                  <div className="review-item-actions">
+                    <button
+                      type="button"
+                      className="btn-link"
+                      onClick={() => handleConfirm(s.id)}
+                    >
+                      Confirm
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-link"
+                      onClick={() => handleReject(s.id)}
+                    >
+                      Reject
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
           )}
         </>
       )}

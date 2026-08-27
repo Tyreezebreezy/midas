@@ -108,7 +108,7 @@ pub fn calculate(conn: &Connection) -> Result<SafeToSpendResult, SafeToSpendErro
     let cycle = pay_cycle::summarize(conn).map_err(|e| SafeToSpendError::Other(e.to_string()))?;
     let Some(cycle) = cycle else {
         return Ok(SafeToSpendResult::Incomplete {
-            reason: "No pay schedule configured yet - set one on the Pay Cycle page to see Safe to Spend.".to_string(),
+            reason: "No pay schedule configured yet - set one under Settings \u{2192} Financial Preferences to see Safe to Spend.".to_string(),
             eligible_cash_cents,
         });
     };

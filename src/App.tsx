@@ -1,17 +1,14 @@
 import { useEffect, useState } from "react";
 import "./App.css";
 import AccountsPage from "./AccountsPage";
-import BackupPage from "./BackupPage";
 import BudgetsPage from "./BudgetsPage";
 import NeedsReviewPage from "./NeedsReviewPage";
 import NetWorthPage from "./NetWorthPage";
 import OverviewPage from "./OverviewPage";
-import PayCyclePage from "./PayCyclePage";
 import RecurringPage from "./RecurringPage";
 import ReportsPage from "./ReportsPage";
-import RulesPage from "./RulesPage";
-import SafeToSpendPage from "./SafeToSpendPage";
 import SavingsGoalsPage from "./SavingsGoalsPage";
+import SettingsPage from "./SettingsPage";
 import TransactionsPage from "./TransactionsPage";
 import {
   parseThemePreference,
@@ -19,37 +16,46 @@ import {
   type ThemePreference,
 } from "./theme";
 
-const themeOptions: ThemePreference[] = ["system", "light", "dark"];
-
-type Tab =
+export type Tab =
   | "overview"
-  | "accounts"
   | "transactions"
+  | "accounts"
   | "budgets"
+  | "bills"
   | "goals"
-  | "paycycle"
-  | "safetospend"
-  | "networth"
-  | "recurring"
-  | "rules"
-  | "review"
   | "reports"
-  | "backup";
+  | "networth"
+  | "review"
+  | "settings";
 
-const tabs: { id: Tab; label: string }[] = [
-  { id: "overview", label: "Overview" },
-  { id: "accounts", label: "Accounts" },
-  { id: "transactions", label: "Transactions" },
-  { id: "budgets", label: "Budgets" },
-  { id: "goals", label: "Savings Goals" },
-  { id: "paycycle", label: "Pay Cycle" },
-  { id: "safetospend", label: "Safe to Spend" },
-  { id: "networth", label: "Net Worth" },
-  { id: "recurring", label: "Recurring & Bills" },
-  { id: "rules", label: "Rules" },
-  { id: "review", label: "Needs Review" },
-  { id: "reports", label: "Reports" },
-  { id: "backup", label: "Backup" },
+const navGroups: {
+  label: string | null;
+  items: { id: Tab; label: string }[];
+}[] = [
+  { label: null, items: [{ id: "overview", label: "Overview" }] },
+  {
+    label: "Money",
+    items: [
+      { id: "transactions", label: "Transactions" },
+      { id: "accounts", label: "Accounts" },
+    ],
+  },
+  {
+    label: "Planning",
+    items: [
+      { id: "budgets", label: "Budget" },
+      { id: "bills", label: "Bills" },
+      { id: "goals", label: "Goals" },
+    ],
+  },
+  {
+    label: "Insights",
+    items: [
+      { id: "reports", label: "Reports" },
+      { id: "networth", label: "Net Worth" },
+    ],
+  },
+  { label: "Review", items: [{ id: "review", label: "Needs Review" }] },
 ];
 
 function loadTheme(): ThemePreference {
@@ -88,59 +94,69 @@ function App() {
 
   return (
     <div className="app-shell">
-      <header className="app-header">
+      <aside className="sidebar">
         <span className="brand">MIDAS</span>
-        <fieldset className="theme-control">
-          <legend>Theme</legend>
-          {themeOptions.map((option) => (
-            <label key={option}>
-              <input
-                type="radio"
-                name="theme"
-                value={option}
-                checked={theme === option}
-                onChange={() => setTheme(option)}
-              />
-              <span>{option[0].toUpperCase() + option.slice(1)}</span>
-            </label>
+        <nav className="sidebar-nav" aria-label="Main">
+          {navGroups.map((group, i) => (
+            <div className="sidebar-group" key={group.label ?? `g${i}`}>
+              {group.label && (
+                <span className="sidebar-group-label">{group.label}</span>
+              )}
+              {group.items.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={
+                    item.id === tab
+                      ? "sidebar-link sidebar-link-active"
+                      : "sidebar-link"
+                  }
+                  aria-current={item.id === tab ? "page" : undefined}
+                  onClick={() => setTab(item.id)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
           ))}
-        </fieldset>
-      </header>
-
-      <nav className="main-nav" aria-label="Main">
-        {tabs.map((t) => (
+        </nav>
+        <div className="sidebar-footer">
           <button
-            key={t.id}
             type="button"
-            className={t.id === tab ? "nav-tab nav-tab-active" : "nav-tab"}
-            aria-current={t.id === tab ? "page" : undefined}
-            onClick={() => setTab(t.id)}
+            className={
+              tab === "settings"
+                ? "sidebar-link sidebar-link-active"
+                : "sidebar-link"
+            }
+            aria-current={tab === "settings" ? "page" : undefined}
+            onClick={() => setTab("settings")}
           >
-            {t.label}
+            Settings
           </button>
-        ))}
-      </nav>
+        </div>
+      </aside>
 
-      <main>
-        {tab === "overview" && <OverviewPage />}
-        {tab === "accounts" && <AccountsPage />}
-        {tab === "transactions" && <TransactionsPage />}
-        {tab === "budgets" && <BudgetsPage />}
-        {tab === "goals" && <SavingsGoalsPage />}
-        {tab === "paycycle" && <PayCyclePage />}
-        {tab === "safetospend" && <SafeToSpendPage />}
-        {tab === "networth" && <NetWorthPage />}
-        {tab === "recurring" && <RecurringPage />}
-        {tab === "rules" && <RulesPage />}
-        {tab === "review" && <NeedsReviewPage />}
-        {tab === "reports" && <ReportsPage />}
-        {tab === "backup" && <BackupPage />}
-      </main>
+      <div className="main-column">
+        <main>
+          {tab === "overview" && <OverviewPage onNavigate={setTab} />}
+          {tab === "transactions" && <TransactionsPage />}
+          {tab === "accounts" && <AccountsPage />}
+          {tab === "budgets" && <BudgetsPage />}
+          {tab === "bills" && <RecurringPage />}
+          {tab === "goals" && <SavingsGoalsPage />}
+          {tab === "reports" && <ReportsPage />}
+          {tab === "networth" && <NetWorthPage />}
+          {tab === "review" && <NeedsReviewPage />}
+          {tab === "settings" && (
+            <SettingsPage theme={theme} onThemeChange={setTheme} />
+          )}
+        </main>
 
-      <footer>
-        <span>MIDAS · Tauri 2 · React · TypeScript · Vite</span>
-        <span>Local only</span>
-      </footer>
+        <footer>
+          <span>MIDAS · Tauri 2 · React · TypeScript · Vite</span>
+          <span>Local only</span>
+        </footer>
+      </div>
     </div>
   );
 }

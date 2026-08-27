@@ -231,7 +231,7 @@ function RulesPage() {
   return (
     <section aria-labelledby="rules-heading">
       <div className="accounts-toolbar">
-        <h1 id="rules-heading">Rules</h1>
+        <h2 id="rules-heading">Rules</h2>
         <button
           type="button"
           className="btn-primary"

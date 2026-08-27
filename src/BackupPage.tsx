@@ -126,7 +126,7 @@ function BackupPage() {
 
   return (
     <section aria-labelledby="backup-heading">
-      <h1 id="backup-heading">Backup &amp; Restore</h1>
+      <h2 id="backup-heading">Backup &amp; Restore</h2>
 
       {error && (
         <p className="form-error" role="alert">

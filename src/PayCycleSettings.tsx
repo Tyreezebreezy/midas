@@ -3,7 +3,10 @@ import type { CycleSummary, PaySchedule, RecurringSeries } from "./api/midas";
 import { payCycleApi } from "./api/midas";
 import { formatCents } from "./lib/currency";
 
-const SCHEDULE_TYPE_LABELS: Record<PaySchedule["schedule_type"], string> = {
+export const SCHEDULE_TYPE_LABELS: Record<
+  PaySchedule["schedule_type"],
+  string
+> = {
   weekly: "Weekly",
   biweekly: "Every 2 weeks",
   monthly: "Monthly",
@@ -213,7 +216,7 @@ function ScheduleForm({
   );
 }
 
-function PayCyclePage() {
+function PayCycleSettings() {
   const [summary, setSummary] = useState<CycleSummary | null>(null);
   const [suggestions, setSuggestions] = useState<RecurringSeries[]>([]);
   const [loading, setLoading] = useState(true);
@@ -253,19 +256,8 @@ function PayCyclePage() {
   }
 
   return (
-    <section aria-labelledby="paycycle-heading">
-      <div className="accounts-toolbar">
-        <h1 id="paycycle-heading">Pay Cycle</h1>
-        {summary && (
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={() => setEditing(summary.schedule)}
-          >
-            Edit schedule
-          </button>
-        )}
-      </div>
+    <div>
+      <h3 className="settings-subheading">Pay schedule</h3>
 
       {error && (
         <p className="form-error" role="alert">
@@ -291,7 +283,7 @@ function PayCyclePage() {
 
           {suggestions.length > 0 && (
             <>
-              <h2 className="section-heading">Detected income patterns</h2>
+              <h4 className="settings-subheading">Detected income patterns</h4>
               <ul className="review-list">
                 {suggestions.map((s) => {
                   const schedule = suggestScheduleFromSeries(s);
@@ -326,44 +318,20 @@ function PayCyclePage() {
           )}
         </>
       ) : (
-        <div className="table-scroll">
-          <table className="accounts-table">
-            <tbody>
-              <tr>
-                <td>Pay frequency</td>
-                <td className="col-balance">
-                  {SCHEDULE_TYPE_LABELS[summary.schedule.schedule_type]}
-                </td>
-              </tr>
-              <tr>
-                <td>Current cycle started</td>
-                <td className="col-balance">{summary.cycle_start}</td>
-              </tr>
-              <tr>
-                <td>Next payday</td>
-                <td className="col-balance">{summary.next_payday}</td>
-              </tr>
-              <tr>
-                <td>Spending this cycle</td>
-                <td className="col-balance">
-                  {formatCents(summary.spending_this_cycle_cents)}
-                </td>
-              </tr>
-              <tr>
-                <td>Obligations before payday</td>
-                <td className="col-balance">
-                  {formatCents(summary.obligations_before_payday_cents)}
-                </td>
-              </tr>
-              <tr>
-                <td>Spending last cycle</td>
-                <td className="col-balance">
-                  {formatCents(summary.prior_cycle_spending_cents)}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+        <p className="muted">
+          Current schedule:{" "}
+          <strong>
+            {SCHEDULE_TYPE_LABELS[summary.schedule.schedule_type]}
+          </strong>
+          , next payday {summary.next_payday}.{" "}
+          <button
+            type="button"
+            className="btn-link"
+            onClick={() => setEditing(summary.schedule)}
+          >
+            Edit schedule
+          </button>
+        </p>
       )}
 
       {editing !== null && (
@@ -376,8 +344,8 @@ function PayCyclePage() {
           }}
         />
       )}
-    </section>
+    </div>
   );
 }
 
-export default PayCyclePage;
+export default PayCycleSettings;
