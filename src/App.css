@@ -23,6 +23,16 @@
   --midas-negative: #b91c1c;
   --midas-positive: #137238;
 
+  /* Small categorical palette for the spending donut only - deliberately
+     muted/earthy so it reads as one cohesive family next to the gold
+     accent, not a generic rainbow chart-library default. */
+  --chart-1: #4d7c66;
+  --chart-2: #b08a3e;
+  --chart-3: #6b8f9e;
+  --chart-4: #9a6b6b;
+  --chart-5: #8a9a5b;
+  --chart-6: #7a7a8a;
+
   color: var(--midas-text);
   background: var(--midas-bg);
 }
@@ -635,6 +645,29 @@ footer {
   font-size: 1.1rem;
 }
 
+.csv-help {
+  margin: 0.25rem 0 1.25rem;
+}
+
+.csv-help summary {
+  color: var(--midas-text-muted);
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  width: fit-content;
+}
+
+.csv-help summary:hover,
+.csv-help summary:focus-visible {
+  color: var(--midas-gold);
+}
+
+.csv-help p {
+  margin: 0.6rem 0 0;
+  color: var(--midas-text-muted);
+  font-size: 0.9rem;
+}
+
 .force-import-toggle {
   display: flex;
   align-items: center;
@@ -688,6 +721,12 @@ footer {
 }
 
 /* Overview page */
+
+.overview-greeting {
+  margin: 0.25rem 0 1rem;
+  color: var(--midas-text-muted);
+  font-size: 0.95rem;
+}
 
 .overview-hero {
   padding: 2rem 2.25rem;
@@ -821,6 +860,22 @@ footer {
   font-size: 0.9rem;
 }
 
+/* Budget suggestions */
+
+.budget-suggestions {
+  margin-bottom: 2rem;
+}
+
+.suggestion-amount {
+  width: 6rem;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--midas-border);
+  border-radius: 0.4rem;
+  background: var(--midas-bg);
+  color: var(--midas-text);
+  text-align: right;
+}
+
 /* Settings page */
 
 .settings-sections {
@@ -859,8 +914,59 @@ footer {
 
 /* Reports page */
 
+.reports-category-layout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 2rem;
+  margin-bottom: 1.5rem;
+}
+
+.category-donut-wrap {
+  flex: 0 0 auto;
+}
+
+.category-donut {
+  width: 11rem;
+  height: 11rem;
+}
+
+.category-donut circle {
+  transition: opacity 0.15s ease;
+}
+
+.category-donut-total {
+  transform: rotate(0deg);
+}
+
+.category-donut-total text {
+  fill: var(--midas-text);
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: middle;
+}
+
+.category-donut-total .donut-total-label {
+  fill: var(--midas-text-muted);
+  font-size: 0.6rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.category-legend-swatch {
+  display: inline-block;
+  width: 0.6rem;
+  height: 0.6rem;
+  margin-right: 0.5rem;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
 .category-row {
   display: flex;
+  align-items: center;
   width: 100%;
   justify-content: space-between;
   gap: 0.75rem;
@@ -871,6 +977,11 @@ footer {
   font: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+.category-row-label {
+  display: flex;
+  align-items: center;
 }
 
 .category-row:hover {

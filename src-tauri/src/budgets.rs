@@ -252,10 +252,85 @@ pub fn list_for_month(conn: &Connection, month: &str) -> Result<Vec<Budget>, Bud
         .map_err(BudgetError::from)
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct BudgetSuggestion {
+    pub category: String,
+    pub average_actual_cents: i64,
+    pub suggested_cents: i64,
+    pub months_of_history: i32,
+    pub existing_planned_cents: Option<i64>,
+}
+
+/// Nearest $5 - simple and explainable, not a jagged three-decimal average.
+fn round_to_nearest_five_dollars(cents: i64) -> i64 {
+    let unit = 500;
+    ((cents + unit / 2) / unit) * unit
+}
+
+/// Deterministic budget suggestions from recent categorized spending - a
+/// proposal only, never applied without the owner's explicit action.
+/// Reuses `reports::spending_by_category` for each lookback month so a
+/// suggestion is never classified differently than the Reports page would
+/// classify the same spending (transfers/opening balances/balance
+/// adjustments already excluded there, refunds already netted). A category
+/// absent from every lookback month simply never appears - no invented
+/// zero-spending history.
+pub fn suggest_budgets(
+    conn: &Connection,
+    target_month: &str,
+    lookback_months: i32,
+) -> Result<Vec<BudgetSuggestion>, BudgetError> {
+    let mut totals: std::collections::BTreeMap<String, (i64, i32)> =
+        std::collections::BTreeMap::new();
+    let mut cursor = target_month.to_string();
+    for _ in 0..lookback_months {
+        cursor = crate::dates::add_months(&cursor, -1);
+        let from = crate::dates::start_of_month(&cursor);
+        let to = crate::dates::end_of_month(&cursor);
+        for c in crate::reports::spending_by_category(conn, &from, &to)? {
+            let entry = totals.entry(c.category).or_insert((0, 0));
+            entry.0 += c.spent_cents;
+            entry.1 += 1;
+        }
+    }
+
+    let existing_planned: std::collections::HashMap<String, i64> =
+        list_for_month(conn, target_month)?
+            .into_iter()
+            .map(|b| (b.category, b.planned_amount_cents))
+            .collect();
+
+    let mut result: Vec<BudgetSuggestion> = totals
+        .into_iter()
+        .map(|(category, (sum_cents, months))| {
+            let average_actual_cents = sum_cents / months as i64;
+            BudgetSuggestion {
+                existing_planned_cents: existing_planned.get(&category).copied(),
+                suggested_cents: round_to_nearest_five_dollars(average_actual_cents),
+                average_actual_cents,
+                category,
+                months_of_history: months,
+            }
+        })
+        .collect();
+    result.sort_by_key(|s| std::cmp::Reverse(s.average_actual_cents));
+    Ok(result)
+}
+
 #[tauri::command]
 pub fn list_budgets(state: State<DbState>, month: String) -> Result<Vec<Budget>, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     list_for_month(&conn, &month).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_budget_suggestions(
+    state: State<DbState>,
+    target_month: String,
+    lookback_months: i32,
+) -> Result<Vec<BudgetSuggestion>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    suggest_budgets(&conn, &target_month, lookback_months).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -562,6 +637,176 @@ mod tests {
         assert_eq!(list_for_month(&conn, "2026-08-15").unwrap().len(), 1);
         assert!(list_for_month(&conn, "2026-07-01").unwrap().is_empty());
         assert!(list_for_month(&conn, "2026-06-01").unwrap().is_empty());
+    }
+
+    #[test]
+    fn suggest_budgets_averages_three_complete_months_and_rounds_to_nearest_five() {
+        let conn = test_conn();
+        let account_id = make_account(&conn);
+        // May/June/July groceries: $438, $472, $451 -> average $453.67 -> $455
+        add_txn(
+            &conn,
+            account_id,
+            "2026-05-10",
+            -43800,
+            TransactionType::Purchase,
+            "Groceries",
+        );
+        add_txn(
+            &conn,
+            account_id,
+            "2026-06-10",
+            -47200,
+            TransactionType::Purchase,
+            "Groceries",
+        );
+        add_txn(
+            &conn,
+            account_id,
+            "2026-07-10",
+            -45100,
+            TransactionType::Purchase,
+            "Groceries",
+        );
+
+        let suggestions = suggest_budgets(&conn, "2026-08-01", 3).unwrap();
+        let groceries = suggestions
+            .iter()
+            .find(|s| s.category == "Groceries")
+            .unwrap();
+        assert_eq!(groceries.months_of_history, 3);
+        assert_eq!(groceries.average_actual_cents, 45366); // integer division truncates ($453.66)
+        assert_eq!(groceries.suggested_cents, 45500);
+        assert_eq!(groceries.existing_planned_cents, None);
+    }
+
+    #[test]
+    fn suggest_budgets_averages_only_over_months_that_actually_have_data() {
+        let conn = test_conn();
+        let account_id = make_account(&conn);
+        // Only June and July have any Dining spending - May must not be
+        // treated as a fabricated $0 month diluting the average.
+        add_txn(
+            &conn,
+            account_id,
+            "2026-06-10",
+            -6000,
+            TransactionType::Purchase,
+            "Dining",
+        );
+        add_txn(
+            &conn,
+            account_id,
+            "2026-07-10",
+            -8000,
+            TransactionType::Purchase,
+            "Dining",
+        );
+
+        let suggestions = suggest_budgets(&conn, "2026-08-01", 3).unwrap();
+        let dining = suggestions.iter().find(|s| s.category == "Dining").unwrap();
+        assert_eq!(dining.months_of_history, 2);
+        assert_eq!(
+            dining.average_actual_cents, 7000,
+            "($60 + $80) / 2 months, not / 3"
+        );
+    }
+
+    #[test]
+    fn suggest_budgets_excludes_transfers_openings_adjustments_and_nets_refunds() {
+        let conn = test_conn();
+        let account_id = make_account(&conn);
+        add_txn(
+            &conn,
+            account_id,
+            "2026-07-05",
+            -10000,
+            TransactionType::Purchase,
+            "Shopping",
+        );
+        add_txn(
+            &conn,
+            account_id,
+            "2026-07-06",
+            2000,
+            TransactionType::Refund,
+            "Shopping",
+        );
+        add_txn(
+            &conn,
+            account_id,
+            "2026-07-07",
+            -50000,
+            TransactionType::Transfer,
+            "Shopping",
+        ); // credit-card payment shape
+        accounting::reconcile_balance(&conn, account_id, 1, "2026-01-01").unwrap(); // opening balance
+        accounting::reconcile_balance(&conn, account_id, 99_900, "2026-07-20").unwrap(); // balance adjustment
+
+        let suggestions = suggest_budgets(&conn, "2026-08-01", 3).unwrap();
+        let shopping = suggestions
+            .iter()
+            .find(|s| s.category == "Shopping")
+            .unwrap();
+        assert_eq!(
+            shopping.average_actual_cents, 8000,
+            "$100 spent - $20 refunded = $80; the transfer, opening balance, and adjustment must not count"
+        );
+        assert!(
+            !suggestions.iter().any(|s| s.category == "Uncategorized"),
+            "opening balance/adjustment rows must not surface as a spurious 'Uncategorized' suggestion"
+        );
+    }
+
+    #[test]
+    fn suggest_budgets_reports_the_existing_planned_amount_without_changing_it() {
+        let conn = test_conn();
+        let account_id = make_account(&conn);
+        create(&conn, &sample_input()).unwrap(); // Groceries, August, $400 planned
+        add_txn(
+            &conn,
+            account_id,
+            "2026-07-10",
+            -45000,
+            TransactionType::Purchase,
+            "Groceries",
+        );
+
+        let suggestions = suggest_budgets(&conn, "2026-08-01", 3).unwrap();
+        let groceries = suggestions
+            .iter()
+            .find(|s| s.category == "Groceries")
+            .unwrap();
+        assert_eq!(groceries.existing_planned_cents, Some(40000));
+
+        // Merely asking for suggestions must never touch the stored budget.
+        let unchanged = list_for_month(&conn, "2026-08-01").unwrap();
+        assert_eq!(unchanged[0].planned_amount_cents, 40000);
+    }
+
+    #[test]
+    fn suggest_budgets_fabricates_nothing_for_a_category_with_no_history() {
+        let conn = test_conn();
+        let account_id = make_account(&conn);
+        add_txn(
+            &conn,
+            account_id,
+            "2026-07-10",
+            -1000,
+            TransactionType::Purchase,
+            "Dining",
+        );
+
+        let suggestions = suggest_budgets(&conn, "2026-08-01", 3).unwrap();
+        assert!(!suggestions.iter().any(|s| s.category == "Groceries"));
+    }
+
+    #[test]
+    fn suggest_budgets_returns_empty_when_there_is_no_spending_history_at_all() {
+        let conn = test_conn();
+        make_account(&conn);
+        let suggestions = suggest_budgets(&conn, "2026-08-01", 3).unwrap();
+        assert!(suggestions.is_empty());
     }
 
     #[test]

@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import type { Budget, BudgetClassification, BudgetInput } from "./api/midas";
+import type {
+  Budget,
+  BudgetClassification,
+  BudgetInput,
+  BudgetSuggestion,
+} from "./api/midas";
 import { accountingApi, budgetsApi } from "./api/midas";
 import { SUGGESTED_CATEGORIES } from "./lib/categories";
 import {
@@ -185,6 +190,18 @@ function BudgetsPage() {
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Budget | null | "new">(null);
 
+  const [suggestions, setSuggestions] = useState<BudgetSuggestion[] | null>(
+    null,
+  );
+  const [suggesting, setSuggesting] = useState(false);
+  const [selectedCategories, setSelectedCategories] = useState<Set<string>>(
+    new Set(),
+  );
+  const [suggestionInputs, setSuggestionInputs] = useState<
+    Record<string, string>
+  >({});
+  const [applying, setApplying] = useState(false);
+
   async function refresh() {
     setLoading(true);
     setError(null);
@@ -236,6 +253,77 @@ function BudgetsPage() {
     }
   }
 
+  async function handleSuggest() {
+    setSuggesting(true);
+    setError(null);
+    try {
+      const result = await budgetsApi.suggest(monthToIso(monthValue), 3);
+      setSuggestions(result);
+      // Default-select only categories with no existing budget, so a first
+      // click on "Apply selected" can never silently change a number the
+      // owner already set on purpose.
+      setSelectedCategories(
+        new Set(
+          result
+            .filter((s) => s.existing_planned_cents === null)
+            .map((s) => s.category),
+        ),
+      );
+      setSuggestionInputs(
+        Object.fromEntries(
+          result.map((s) => [
+            s.category,
+            centsToDollarInput(s.suggested_cents),
+          ]),
+        ),
+      );
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setSuggesting(false);
+    }
+  }
+
+  function toggleSuggestion(category: string) {
+    setSelectedCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(category)) next.delete(category);
+      else next.add(category);
+      return next;
+    });
+  }
+
+  async function handleApplySuggestions() {
+    if (!suggestions) return;
+    setApplying(true);
+    setError(null);
+    try {
+      for (const s of suggestions) {
+        if (!selectedCategories.has(s.category)) continue;
+        const cents = parseDollarsToCents(suggestionInputs[s.category] ?? "");
+        if (cents === null || cents < 0) continue;
+        const input: BudgetInput = {
+          category: s.category,
+          month: monthToIso(monthValue),
+          planned_amount_cents: cents,
+          classification: "flexible",
+        };
+        const existing = budgets.find((b) => b.category === s.category);
+        if (existing) {
+          await budgetsApi.update(existing.id, input);
+        } else {
+          await budgetsApi.create(input);
+        }
+      }
+      setSuggestions(null);
+      await refresh();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setApplying(false);
+    }
+  }
+
   const hasHistory = Object.values(actualsByCategory).some(
     ([last, twoAgo]) => last !== 0 || twoAgo !== 0,
   );
@@ -253,6 +341,14 @@ function BudgetsPage() {
           />
           <button
             type="button"
+            className="btn-secondary"
+            onClick={handleSuggest}
+            disabled={suggesting}
+          >
+            {suggesting ? "Suggesting…" : "Suggest from spending"}
+          </button>
+          <button
+            type="button"
             className="btn-primary"
             onClick={() => setEditing("new")}
           >
@@ -265,6 +361,115 @@ function BudgetsPage() {
         <p className="form-error" role="alert">
           {error}
         </p>
+      )}
+
+      {suggestions && (
+        <div className="budget-suggestions">
+          <h2 className="section-heading">Suggested budgets</h2>
+          {suggestions.length === 0 ? (
+            <p className="muted">
+              MIDAS needs more categorized spending history before it can
+              suggest a budget.
+            </p>
+          ) : (
+            <>
+              <p className="muted">
+                Based on the last{" "}
+                {Math.max(...suggestions.map((s) => s.months_of_history))} month
+                {Math.max(...suggestions.map((s) => s.months_of_history)) === 1
+                  ? ""
+                  : "s"}{" "}
+                of categorized spending. Nothing is applied until you select
+                categories and confirm below.
+              </p>
+              <div className="table-scroll">
+                <table className="accounts-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">
+                        <span className="sr-only">Include</span>
+                      </th>
+                      <th scope="col">Category</th>
+                      <th scope="col" className="col-balance">
+                        Recent average
+                      </th>
+                      <th scope="col" className="col-balance">
+                        Current
+                      </th>
+                      <th scope="col" className="col-balance">
+                        Suggested
+                      </th>
+                      <th scope="col">History</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {suggestions.map((s) => (
+                      <tr key={s.category}>
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked={selectedCategories.has(s.category)}
+                            onChange={() => toggleSuggestion(s.category)}
+                            aria-label={`Include ${s.category}`}
+                          />
+                        </td>
+                        <td>{s.category}</td>
+                        <td className="col-balance">
+                          {formatCents(s.average_actual_cents)}
+                        </td>
+                        <td className="col-balance">
+                          {s.existing_planned_cents !== null ? (
+                            formatCents(s.existing_planned_cents)
+                          ) : (
+                            <span className="muted">—</span>
+                          )}
+                        </td>
+                        <td className="col-balance">
+                          <input
+                            inputMode="decimal"
+                            className="suggestion-amount"
+                            value={suggestionInputs[s.category] ?? ""}
+                            onChange={(e) =>
+                              setSuggestionInputs((prev) => ({
+                                ...prev,
+                                [s.category]: e.target.value,
+                              }))
+                            }
+                            aria-label={`Suggested amount for ${s.category}`}
+                          />
+                        </td>
+                        <td className="muted">
+                          {s.months_of_history} month
+                          {s.months_of_history === 1 ? "" : "s"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="dialog-actions">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setSuggestions(null)}
+                  disabled={applying}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={handleApplySuggestions}
+                  disabled={applying || selectedCategories.size === 0}
+                >
+                  {applying
+                    ? "Applying…"
+                    : `Apply ${selectedCategories.size} selected`}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
       )}
 
       {loading ? (

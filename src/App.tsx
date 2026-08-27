@@ -66,9 +66,26 @@ function loadTheme(): ThemePreference {
   }
 }
 
+function loadDisplayName(): string {
+  try {
+    return localStorage.getItem("midas-display-name") ?? "";
+  } catch {
+    return "";
+  }
+}
+
 function App() {
   const [theme, setTheme] = useState(loadTheme);
   const [tab, setTab] = useState<Tab>("overview");
+  const [displayName, setDisplayName] = useState(loadDisplayName);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("midas-display-name", displayName);
+    } catch {
+      // The name still works for this session when storage is unavailable.
+    }
+  }, [displayName]);
 
   useEffect(() => {
     const systemDark = window.matchMedia("(prefers-color-scheme: dark)");
@@ -138,7 +155,9 @@ function App() {
 
       <div className="main-column">
         <main>
-          {tab === "overview" && <OverviewPage onNavigate={setTab} />}
+          {tab === "overview" && (
+            <OverviewPage onNavigate={setTab} displayName={displayName} />
+          )}
           {tab === "transactions" && <TransactionsPage />}
           {tab === "accounts" && <AccountsPage />}
           {tab === "budgets" && <BudgetsPage />}
@@ -148,7 +167,12 @@ function App() {
           {tab === "networth" && <NetWorthPage />}
           {tab === "review" && <NeedsReviewPage />}
           {tab === "settings" && (
-            <SettingsPage theme={theme} onThemeChange={setTheme} />
+            <SettingsPage
+              theme={theme}
+              onThemeChange={setTheme}
+              displayName={displayName}
+              onDisplayNameChange={setDisplayName}
+            />
           )}
         </main>
 

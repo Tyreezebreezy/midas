@@ -338,12 +338,25 @@ export interface BudgetInput {
   classification: BudgetClassification;
 }
 
+export interface BudgetSuggestion {
+  category: string;
+  average_actual_cents: number;
+  suggested_cents: number;
+  months_of_history: number;
+  existing_planned_cents: number | null;
+}
+
 export const budgetsApi = {
   list: (month: string) => invoke<Budget[]>("list_budgets", { month }),
   create: (input: BudgetInput) => invoke<Budget>("create_budget", { input }),
   update: (id: number, input: BudgetInput) =>
     invoke<Budget>("update_budget", { id, input }),
   delete: (id: number) => invoke<void>("delete_budget", { id }),
+  suggest: (targetMonth: string, lookbackMonths: number) =>
+    invoke<BudgetSuggestion[]>("get_budget_suggestions", {
+      targetMonth,
+      lookbackMonths,
+    }),
 };
 
 // --- Savings Goals (Phase 4B) ---

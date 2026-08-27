@@ -168,7 +168,7 @@ function CsvImportWizard({
       {step === "select" && (
         <div className="import-step">
           <div className="field">
-            <label htmlFor="import-account">Account</label>
+            <label htmlFor="import-account">Import into account</label>
             <select
               id="import-account"
               value={accountId}
@@ -192,6 +192,15 @@ function CsvImportWizard({
               disabled={busy}
             />
           </div>
+          <details className="csv-help">
+            <summary>Where do I get a CSV?</summary>
+            <p>
+              Most banks and credit-card providers let you download your
+              transaction history from their website. Look for "Download",
+              "Export", or "Download transactions" under your account activity
+              and choose CSV when available.
+            </p>
+          </details>
           <div className="dialog-actions">
             <button type="button" className="btn-secondary" onClick={onClose}>
               Cancel

@@ -62,6 +62,7 @@ pub fn run() {
             budgets::create_budget,
             budgets::update_budget,
             budgets::delete_budget,
+            budgets::get_budget_suggestions,
             savings_goals::list_savings_goals,
             savings_goals::create_savings_goal,
             savings_goals::update_savings_goal,

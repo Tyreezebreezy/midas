@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Account, Transaction, TransactionFilter } from "./api/midas";
 import { accountsApi, transactionsApi } from "./api/midas";
+import AccountForm from "./AccountForm";
 import CsvImportWizard from "./CsvImportWizard";
 import TransactionForm from "./TransactionForm";
 import { SUGGESTED_CATEGORIES } from "./lib/categories";
@@ -26,6 +27,11 @@ function TransactionsPage() {
   const [dateTo, setDateTo] = useState("");
   const [editing, setEditing] = useState<Transaction | null | "new">(null);
   const [importing, setImporting] = useState(false);
+  const [addingAccount, setAddingAccount] = useState(false);
+
+  async function refreshAccounts() {
+    setAccounts(await accountsApi.list(false));
+  }
 
   const filter: TransactionFilter = {
     account_id: accountId === "" ? null : accountId,
@@ -92,7 +98,15 @@ function TransactionsPage() {
 
       {accounts.length === 0 && (
         <p className="muted">
-          Create an account first, then add or import transactions.
+          Create the account in MIDAS before adding or importing its
+          transactions.{" "}
+          <button
+            type="button"
+            className="btn-link"
+            onClick={() => setAddingAccount(true)}
+          >
+            Add account
+          </button>
         </p>
       )}
 
@@ -261,6 +275,17 @@ function TransactionsPage() {
           onImported={() => {
             setImporting(false);
             refresh();
+          }}
+        />
+      )}
+
+      {addingAccount && (
+        <AccountForm
+          account={null}
+          onClose={() => setAddingAccount(false)}
+          onSaved={() => {
+            setAddingAccount(false);
+            refreshAccounts();
           }}
         />
       )}

@@ -9,9 +9,13 @@ const themeOptions: ThemePreference[] = ["system", "light", "dark"];
 function SettingsPage({
   theme,
   onThemeChange,
+  displayName,
+  onDisplayNameChange,
 }: {
   theme: ThemePreference;
   onThemeChange: (preference: ThemePreference) => void;
+  displayName: string;
+  onDisplayNameChange: (name: string) => void;
 }) {
   return (
     <div>
@@ -37,6 +41,26 @@ function SettingsPage({
               </label>
             ))}
           </fieldset>
+        </section>
+
+        <section
+          aria-labelledby="personalization-heading"
+          className="settings-section"
+        >
+          <h2 id="personalization-heading">Personalization</h2>
+          <div className="field">
+            <label htmlFor="display-name">Display name</label>
+            <input
+              id="display-name"
+              value={displayName}
+              onChange={(e) => onDisplayNameChange(e.target.value)}
+              placeholder="Optional"
+            />
+            <p className="field-hint">
+              Used only for a small greeting on Overview. Stored on this device
+              only.
+            </p>
+          </div>
         </section>
 
         <section

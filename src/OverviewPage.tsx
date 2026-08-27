@@ -6,7 +6,20 @@ import { formatCents } from "./lib/currency";
 import { SCHEDULE_TYPE_LABELS } from "./PayCycleSettings";
 import { TRANSACTION_TYPE_LABELS } from "./lib/transactionTypes";
 
-function OverviewPage({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
+function greeting(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
+}
+
+function OverviewPage({
+  onNavigate,
+  displayName,
+}: {
+  onNavigate: (tab: Tab) => void;
+  displayName: string;
+}) {
   const [overview, setOverview] = useState<OverviewResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -44,6 +57,11 @@ function OverviewPage({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
   return (
     <section aria-labelledby="overview-heading">
       <h1 id="overview-heading">Overview</h1>
+      {displayName.trim() !== "" && (
+        <p className="overview-greeting">
+          {greeting()}, {displayName.trim()}
+        </p>
+      )}
 
       <div className="overview-hero">
         <h2>Safe to spend</h2>
