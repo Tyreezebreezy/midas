@@ -11,7 +11,17 @@ No cloud account, no bank sync, no telemetry. Local data is the source of truth.
 - **Restore**: choose a backup file on the same tab. MIDAS opens it as its own, separate, temporary connection first and shows you what's in it (schema version, account and transaction counts) before anything changes. Only on your explicit confirmation does it become the live database - and your previous live database is renamed aside with a timestamp (`midas.sqlite3.before-restore-<timestamp>.bak`, next to the real one), never deleted, so a restore is itself always recoverable.
 - **Export**: the same tab exports every transaction as a plain CSV (date, account, merchant, category, type, dollar amount, notes) - readable in Excel or Google Sheets with or without MIDAS installed. This is a portability export, not a backup: it doesn't include budgets, goals, rules, or enough structure to restore from - use Backup for that.
 - **Security and privacy**: MIDAS makes zero outbound network calls of any kind (the production Content-Security-Policy has no external `connect-src`) and requests zero Tauri plugin capabilities (`src-tauri/capabilities/default.json`) - every backend operation, including import/export/backup/restore, moves data through the app's own narrow, typed commands as plain strings, never a raw filesystem or dialog API. There is no logging anywhere in the app (no `println!`, no `console.log`) that could write financial data to disk outside the database itself.
-- **Known limitations**: backups are manual, not scheduled or automatic - MIDAS doesn't run in the background. The database file itself is not encrypted at rest (relies on your OS-level disk/account security). CSV export is one-way - it's for reading elsewhere, not for re-importing back into MIDAS (the CSV importer expects arbitrary bank-export formats, not MIDAS's own export shape). There is no multi-device sync; each installation has its own independent database unless you manually back up and restore between them. Windows is the only platform actually built and tested so far.
+- **Known limitations**: backups are manual, not scheduled or automatic - MIDAS doesn't run in the background. The database file itself is not encrypted at rest (relies on your OS-level disk/account security). CSV export is one-way - it's for reading elsewhere, not for re-importing back into MIDAS (the CSV importer expects arbitrary bank-export formats, not MIDAS's own export shape). There is no multi-device sync; each installation has its own independent database unless you manually back up and restore between them. Windows is the only platform actually built and tested so far. Reinstalling silently (`/S`) directly over an existing installation hangs on a confirmation dialog silent mode doesn't suppress - a normal interactive install, or installing after a full uninstall, both work correctly; see `docs/release/0.1.0.md` for detail.
+
+## Installing
+
+Download `MIDAS_<version>_x64-setup.exe` and its matching `.sha256` file from the release. Verify the hash before running it:
+
+```powershell
+Get-FileHash .\MIDAS_<version>_x64-setup.exe -Algorithm SHA256
+```
+
+Compare the output against the `.sha256` file. Run the installer - it installs per-user to `%LOCALAPPDATA%\MIDAS` (no administrator rights needed) and adds a Start Menu shortcut. Uninstall from _Settings → Apps_ (or the Start Menu shortcut's right-click menu) like any other Windows app - **uninstalling removes the application files only, never your data** (`%APPDATA%\com.breezy.midas\midas.sqlite3` is untouched; back it up first anyway if you're about to reformat the whole machine, not just uninstall one app).
 
 ## Start here
 
@@ -31,7 +41,7 @@ cargo fmt --manifest-path src-tauri\Cargo.toml -- --check
 cargo check --locked --manifest-path src-tauri\Cargo.toml
 ```
 
-Run the desktop app with `npm.cmd run tauri dev`. Build the installer only inside an approved release phase with `npm.cmd run tauri build`. Run the complete gate with `powershell -ExecutionPolicy Bypass -File scripts\validate.ps1` (frontend check, Rust fmt/check/clippy/test/audit). Security scans run separately each phase and aren't part of that script: `gitleaks detect`/`gitleaks protect`, `trivy fs`, and `npm audit`.
+Run the desktop app with `npm.cmd run tauri dev`. Build the installer only inside an approved release phase with `npm.cmd run tauri build` (produces `src-tauri\target\release\bundle\nsis\MIDAS_<version>_x64-setup.exe`; hash it with `scripts\hash-artifacts.ps1`). Run the complete gate with `powershell -ExecutionPolicy Bypass -File scripts\validate.ps1` (frontend check, Rust fmt/check/clippy/test/audit). Security scans run separately each phase and aren't part of that script: `gitleaks detect`/`gitleaks protect`, `trivy fs`, and `npm audit`.
 
 ## Repository map
 
@@ -42,6 +52,7 @@ Run the desktop app with `npm.cmd run tauri dev`. Build the installer only insid
 - `docs/product/`: the canonical MIDAS product and build handoffs.
 - `docs/architecture/`: architecture notes as they are established.
 - `docs/decisions/`: ADRs for durable technical decisions.
+- `docs/release/`: filled-in release checklists, one per version.
 - `specs/`: phase specs and evidence.
 - `src/`, `src-tauri/`: the application.
 
