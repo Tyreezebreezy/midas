@@ -3,6 +3,7 @@ import type { Tab } from "./App";
 import type { OverviewResult } from "./api/midas";
 import { overviewApi } from "./api/midas";
 import { formatCents } from "./lib/currency";
+import { formatDate } from "./lib/dateFormat";
 import { SCHEDULE_TYPE_LABELS } from "./PayCycleSettings";
 import { TRANSACTION_TYPE_LABELS } from "./lib/transactionTypes";
 
@@ -70,7 +71,9 @@ function OverviewPage({
             <p className="hero-number">
               {formatCents(sts.safe_to_spend_cents)}
             </p>
-            <p className="muted">Until your next payday, {sts.next_payday}</p>
+            <p className="muted">
+              Until your next payday, {formatDate(sts.next_payday)}
+            </p>
             <p className="hero-summary-line">
               {formatCents(sts.eligible_cash_cents)} cash −{" "}
               {formatCents(sts.obligations_before_payday_cents)} bills −{" "}
@@ -153,7 +156,10 @@ function OverviewPage({
                   <span>{bill.merchant}</span>
                   <span>
                     {formatCents(bill.expected_amount_cents)}
-                    <span className="muted"> · {bill.next_expected_date}</span>
+                    <span className="muted">
+                      {" "}
+                      · {formatDate(bill.next_expected_date)}
+                    </span>
                   </span>
                 </li>
               ))}
@@ -165,11 +171,11 @@ function OverviewPage({
           <h2>Current pay cycle</h2>
           {overview.pay_cycle ? (
             <>
+              <p className="muted">Next payday</p>
               <p className="headline-number">
-                {overview.pay_cycle.next_payday}
+                {formatDate(overview.pay_cycle.next_payday)}
               </p>
               <p className="muted">
-                Next payday ·{" "}
                 {
                   SCHEDULE_TYPE_LABELS[
                     overview.pay_cycle.schedule.schedule_type
@@ -342,7 +348,7 @@ function OverviewPage({
             <tbody>
               {overview.recent_transactions.map((t) => (
                 <tr key={t.id}>
-                  <td>{t.transaction_date}</td>
+                  <td>{formatDate(t.transaction_date)}</td>
                   <td>{t.merchant}</td>
                   <td>{TRANSACTION_TYPE_LABELS[t.transaction_type]}</td>
                   <td className="col-balance">

@@ -6,6 +6,7 @@ import {
   formatCents,
   parseDollarsToCents,
 } from "./lib/currency";
+import { formatDate } from "./lib/dateFormat";
 
 const STATUS_LABELS: Record<SavingsGoal["status"], string> = {
   in_progress: "In progress",
@@ -279,7 +280,7 @@ function SavingsGoalsPage() {
                 </div>
                 <p className="muted">
                   {g.target_date
-                    ? `Target date ${g.target_date}`
+                    ? `Target date ${formatDate(g.target_date)}`
                     : "No target date"}
                   {g.reserved_amount_cents != null &&
                     ` · ${formatCents(g.reserved_amount_cents)} protected from Safe to Spend`}

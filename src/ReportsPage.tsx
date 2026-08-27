@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { CategoryTotal, MonthlyFlow, Transaction } from "./api/midas";
 import { reportsApi, transactionsApi } from "./api/midas";
 import { formatCents } from "./lib/currency";
+import { formatDate } from "./lib/dateFormat";
 import { currentMonthValue, monthRange, shiftMonth } from "./lib/monthValue";
 
 const monthFormatter = new Intl.DateTimeFormat("en-US", {
@@ -169,7 +170,7 @@ function CategoryDrilldown({
         <tbody>
           {transactions.map((t) => (
             <tr key={t.id}>
-              <td>{t.transaction_date}</td>
+              <td>{formatDate(t.transaction_date)}</td>
               <td>{t.merchant}</td>
               <td className="col-balance">
                 <span

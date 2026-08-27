@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Account, Cadence, RecurringSeries } from "./api/midas";
 import { accountsApi, recurringApi } from "./api/midas";
 import { formatCents } from "./lib/currency";
+import { formatDate } from "./lib/dateFormat";
 
 const CADENCE_LABELS: Record<Cadence, string> = {
   weekly: "Weekly",
@@ -158,9 +159,11 @@ function RecurringPage() {
                       <td className="col-balance">
                         {formatCents(s.expected_amount_cents)}
                       </td>
-                      <td>{s.next_expected_date}</td>
+                      <td>{formatDate(s.next_expected_date)}</td>
                       <td>
-                        {s.last_occurrence_date ?? (
+                        {s.last_occurrence_date ? (
+                          formatDate(s.last_occurrence_date)
+                        ) : (
                           <span className="muted">—</span>
                         )}
                       </td>
@@ -194,7 +197,9 @@ function RecurringPage() {
                     <span className="muted">{CADENCE_LABELS[s.cadence]}</span>
                     <span>{formatCents(s.expected_amount_cents)}</span>
                   </div>
-                  <p className="muted">Next expected {s.next_expected_date}</p>
+                  <p className="muted">
+                    Next expected {formatDate(s.next_expected_date)}
+                  </p>
                   <div className="review-item-actions">
                     <button
                       type="button"

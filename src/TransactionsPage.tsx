@@ -6,6 +6,7 @@ import CsvImportWizard from "./CsvImportWizard";
 import TransactionForm from "./TransactionForm";
 import { SUGGESTED_CATEGORIES } from "./lib/categories";
 import { formatCents } from "./lib/currency";
+import { formatDate } from "./lib/dateFormat";
 import { TRANSACTION_TYPE_LABELS } from "./lib/transactionTypes";
 
 function TransactionsPage() {
@@ -200,7 +201,7 @@ function TransactionsPage() {
                   key={t.id}
                   className={t.is_archived ? "row-archived" : undefined}
                 >
-                  <td>{t.transaction_date}</td>
+                  <td>{formatDate(t.transaction_date)}</td>
                   <td>{accountName(t.account_id)}</td>
                   <td
                     title={

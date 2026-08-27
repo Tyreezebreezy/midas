@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { CycleSummary, PaySchedule, RecurringSeries } from "./api/midas";
 import { payCycleApi } from "./api/midas";
 import { formatCents } from "./lib/currency";
+import { formatDate } from "./lib/dateFormat";
 
 export const SCHEDULE_TYPE_LABELS: Record<
   PaySchedule["schedule_type"],
@@ -323,7 +324,7 @@ function PayCycleSettings() {
           <strong>
             {SCHEDULE_TYPE_LABELS[summary.schedule.schedule_type]}
           </strong>
-          , next payday {summary.next_payday}.{" "}
+          , next payday {formatDate(summary.next_payday)}.{" "}
           <button
             type="button"
             className="btn-link"
