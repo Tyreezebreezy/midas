@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Exposes 47 narrow app-defined commands (src-tauri/src/*.rs), all invoked through the DB connection managed in Rust state - no Tauri plugin permissions are granted, still zero as of Phase 6. File import/export/backup all move content over these same app-defined commands as plain strings (text or base64), the same zero-capability pattern established in ADR-0005 for CSV import - none of it goes through a `fs` or `dialog` plugin. See docs/decisions for the reasoning behind each phase that touched file handling.",
+  "description": "Exposes 48 narrow app-defined commands (src-tauri/src/*.rs), all invoked through the DB connection managed in Rust state - no Tauri plugin permissions are granted, still zero as of Phase 6.6. File import/export/backup all move content over these same app-defined commands as plain strings (text or base64), the same zero-capability pattern established in ADR-0005 for CSV import - none of it goes through a `fs` or `dialog` plugin. See docs/decisions for the reasoning behind each phase that touched file handling.",
   "windows": ["main"],
   "permissions": []
 }
