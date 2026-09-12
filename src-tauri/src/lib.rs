@@ -13,6 +13,7 @@ mod ofx_accounts;
 mod overview;
 mod pay_cycle;
 mod payees;
+mod reconciliation;
 mod recurring;
 mod reports;
 mod rules;
@@ -108,6 +109,13 @@ pub fn run() {
             import_profiles::update_import_profile,
             import_profiles::delete_import_profile,
             import_profiles::set_import_profile_archived,
+            reconciliation::get_reconciliation_preview,
+            reconciliation::complete_reconciliation,
+            reconciliation::reopen_reconciliation,
+            reconciliation::list_reconciliations,
+            reconciliation::get_reconciliation_summary,
+            reconciliation::get_latest_statement_hint,
+            reconciliation::get_running_balances,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Tauri application");

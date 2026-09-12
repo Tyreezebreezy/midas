@@ -273,9 +273,14 @@ fn upsert_balance_adjustment(
 
     match (existing, delta) {
         (Some((id, _)), 0) => {
+            // Removing an already-reconciled adjustment is exactly the
+            // "balance adjustment changes" case product handoff section 16
+            // names as invalidating.
+            crate::reconciliation::invalidate_if_linked(conn, id)?;
             conn.execute("DELETE FROM transactions WHERE id = ?1", params![id])?;
         }
         (Some((id, _)), _) => {
+            crate::reconciliation::invalidate_if_linked(conn, id)?;
             conn.execute(
                 "UPDATE transactions SET amount_cents = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
                  WHERE id = ?2",
@@ -284,6 +289,12 @@ fn upsert_balance_adjustment(
         }
         (None, 0) => {}
         (None, _) => {
+            // A brand-new adjustment has no reconciliation_id of its own
+            // yet, but if it lands on a date an already-completed
+            // reconciliation covers, it still changes that reconciliation's
+            // cleared-balance sum (balance adjustments always count -
+            // reconciliation::cleared_balance_as_of).
+            crate::reconciliation::invalidate_completed_covering(conn, account_id, as_of_date)?;
             conn.execute(
                 "INSERT INTO transactions (
                     account_id, transaction_date, amount_cents, transaction_type,
@@ -357,6 +368,8 @@ mod tests {
         conn.execute_batch(include_str!("../migrations/0009_import_engine_v2.sql"))
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0010_ofx_source_adapter.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../migrations/0011_reconciliation.sql"))
             .unwrap();
         conn
     }

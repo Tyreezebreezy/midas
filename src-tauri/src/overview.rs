@@ -142,6 +142,8 @@ mod tests {
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0010_ofx_source_adapter.sql"))
             .unwrap();
+        conn.execute_batch(include_str!("../migrations/0011_reconciliation.sql"))
+            .unwrap();
         conn
     }
 

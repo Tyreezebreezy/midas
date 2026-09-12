@@ -13,6 +13,7 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0008_foundation_batch_1.sql"),
     include_str!("../migrations/0009_import_engine_v2.sql"),
     include_str!("../migrations/0010_ofx_source_adapter.sql"),
+    include_str!("../migrations/0011_reconciliation.sql"),
 ];
 
 /// The schema version this build knows how to read and write - always
@@ -272,7 +273,7 @@ mod tests {
             conn.execute_batch(sql).unwrap();
         }
         conn.pragma_update(None, "user_version", 7).unwrap();
-        assert_eq!(MIGRATIONS.len(), 10, "this test targets exactly the v0.1.0 -> Foundation Batch 1 boundary; update the slice above if more migrations are added before this one");
+        assert_eq!(MIGRATIONS.len(), 11, "this test targets exactly the v0.1.0 -> Foundation Batch 1 boundary; update the slice above if more migrations are added before this one");
 
         conn.execute(
             "INSERT INTO accounts (id, name, institution, account_type, include_in_net_worth, notes)
@@ -478,7 +479,7 @@ mod tests {
             conn.execute_batch(sql).unwrap();
         }
         conn.pragma_update(None, "user_version", 8).unwrap();
-        assert_eq!(MIGRATIONS.len(), 10, "this test targets exactly the Foundation Batch 1 -> Import Engine v2 boundary; update the slice above if more migrations are added before this one");
+        assert_eq!(MIGRATIONS.len(), 11, "this test targets exactly the Foundation Batch 1 -> Import Engine v2 boundary; update the slice above if more migrations are added before this one");
 
         conn.execute(
             "INSERT INTO accounts (id, name, account_type, include_in_net_worth) VALUES (1, 'Checking', 'checking', 1)",
@@ -554,7 +555,7 @@ mod tests {
             conn.execute_batch(sql).unwrap();
         }
         conn.pragma_update(None, "user_version", 9).unwrap();
-        assert_eq!(MIGRATIONS.len(), 10, "this test targets exactly the Import Engine v2 -> OFX source adapter boundary; update the slice above if more migrations are added before this one");
+        assert_eq!(MIGRATIONS.len(), 11, "this test targets exactly the Import Engine v2 -> OFX source adapter boundary; update the slice above if more migrations are added before this one");
 
         conn.execute(
             "INSERT INTO accounts (id, name, account_type, include_in_net_worth) VALUES (1, 'Checking', 'checking', 1)",
@@ -573,7 +574,11 @@ mod tests {
         let version: i32 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 10);
+        // Unlike the 0008/0009/0011 tests, this one runs the full `migrate`
+        // chain rather than one isolated migration, so it lands on
+        // whatever the current total is, not a fixed boundary - asserted
+        // dynamically so a later migration never has to touch this line.
+        assert_eq!(version, MIGRATIONS.len() as i32);
 
         let (filename, committed_count): (String, i64) = conn
             .query_row(
@@ -603,6 +608,93 @@ mod tests {
         assert_eq!(
             mapping_count, 0,
             "ofx_account_mappings must exist and start empty"
+        );
+    }
+
+    /// Account reconciliation (specs/phase-011) adds one new table
+    /// (`reconciliations`), one nullable column on `transactions`
+    /// (`reconciliation_id`), and two nullable columns on `imports`
+    /// (`statement_start_date`/`statement_end_date`) - same proof shape as
+    /// the 0008/0009/0010 tests above, scoped to the 0010 -> 0011 boundary.
+    #[test]
+    fn migration_0011_preserves_existing_data_and_defaults_new_columns_sanely() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        for sql in &MIGRATIONS[0..10] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 10).unwrap();
+
+        conn.execute(
+            "INSERT INTO accounts (id, name, account_type, include_in_net_worth) VALUES (1, 'Checking', 'checking', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO imports (id, account_id, source_filename, file_hash, row_count, committed_count, duplicate_count, needs_review_count, column_mapping_json, source_type, statement_balance_cents, statement_balance_date)
+             VALUES (1, 1, 'august.qfx', 'deadbeef', 10, 8, 1, 1, '{}', 'qfx', 421819, '2026-08-31')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO transactions (id, account_id, transaction_date, amount_cents, transaction_type, raw_description, merchant, source_import_id)
+             VALUES (1, 1, '2026-08-05', -4500, 'purchase', 'Coffee', 'Coffee', 1)",
+            [],
+        )
+        .unwrap();
+
+        conn.execute_batch(MIGRATIONS[10]).unwrap();
+        conn.pragma_update(None, "user_version", 11).unwrap();
+
+        let version: i32 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 11);
+
+        // Existing rows are untouched.
+        let (merchant, amount): (String, i64) = conn
+            .query_row(
+                "SELECT merchant, amount_cents FROM transactions WHERE id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(merchant, "Coffee");
+        assert_eq!(amount, -4500);
+        let statement_balance: i64 = conn
+            .query_row(
+                "SELECT statement_balance_cents FROM imports WHERE id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(statement_balance, 421819);
+
+        // New columns default to NULL for every pre-existing row.
+        let reconciliation_id: Option<i64> = conn
+            .query_row(
+                "SELECT reconciliation_id FROM transactions WHERE id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(reconciliation_id, None);
+        let (start, end): (Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT statement_start_date, statement_end_date FROM imports WHERE id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(start, None);
+        assert_eq!(end, None);
+
+        let reconciliation_count: i64 = conn
+            .query_row("SELECT count(*) FROM reconciliations", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            reconciliation_count, 0,
+            "reconciliations must exist and start empty"
         );
     }
 }

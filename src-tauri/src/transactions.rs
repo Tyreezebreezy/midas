@@ -137,6 +137,11 @@ pub struct Transaction {
     /// a stronger dedup signal than `source_row_hash`.
     pub external_transaction_id: Option<String>,
     pub reconciliation_status: ReconciliationStatus,
+    /// Which reconciliation (specs/phase-011) this transaction was included
+    /// in when it last closed, if any. `None` for the vast majority of
+    /// transactions. Freed back to `None` when that reconciliation is
+    /// reopened (`reconciliation::reopen`).
+    pub reconciliation_id: Option<i64>,
     /// Foundation Batch 1 - not yet settable from the UI. An analytical
     /// flag a future feature can use to exclude a one-off purchase from a
     /// budget-suggestion or recurring-detection baseline.
@@ -210,7 +215,7 @@ impl From<rusqlite::Error> for TransactionError {
 const COLUMNS: &str = "id, account_id, transaction_date, posted_date, amount_cents, transaction_type, \
     raw_description, merchant, category, subcategory, notes, tags, is_pending, is_archived, review_status, \
     source_import_id, source_row_hash, transfer_pair_transaction_id, refund_of_transaction_id, \
-    payee_id, split_parent_transaction_id, external_transaction_id, reconciliation_status, is_one_time, \
+    payee_id, split_parent_transaction_id, external_transaction_id, reconciliation_status, reconciliation_id, is_one_time, \
     created_at, updated_at";
 
 fn row_to_transaction(row: &rusqlite::Row) -> rusqlite::Result<Transaction> {
@@ -242,6 +247,7 @@ fn row_to_transaction(row: &rusqlite::Row) -> rusqlite::Result<Transaction> {
         reconciliation_status: ReconciliationStatus::from_sql_str(
             &row.get::<_, String>("reconciliation_status")?,
         )?,
+        reconciliation_id: row.get("reconciliation_id")?,
         is_one_time: row.get::<_, i64>("is_one_time")? != 0,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
@@ -458,6 +464,29 @@ pub fn update(
         .unwrap_or(&description)
         .to_string();
 
+    // Snapshot the fields a reconciliation cares about *before* they are
+    // overwritten - `invalidate_if_update_matters` compares this against
+    // the incoming values to decide whether this edit is one of the kinds
+    // section 16 names as invalidating (amount/account/type/date-crossing-
+    // the-statement-boundary), never for a harmless field like notes or
+    // category, which this snapshot doesn't even look at.
+    let before: Option<(i64, i64, String, String, Option<i64>)> = conn
+        .query_row(
+            "SELECT account_id, amount_cents, transaction_type, transaction_date, reconciliation_id
+             FROM transactions WHERE id = ?1",
+            params![id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .optional()?;
+
     let affected = conn.execute(
         "UPDATE transactions SET
             account_id = ?1, transaction_date = ?2, posted_date = ?3, amount_cents = ?4,
@@ -484,6 +513,23 @@ pub fn update(
     if affected == 0 {
         return Err(TransactionError::NotFound(id));
     }
+
+    if let Some((old_account_id, old_amount_cents, old_type, old_date, reconciliation_id)) = before
+    {
+        crate::reconciliation::invalidate_if_update_matters(
+            conn,
+            old_account_id,
+            old_amount_cents,
+            &old_type,
+            &old_date,
+            reconciliation_id,
+            input.account_id,
+            input.amount_cents,
+            input.transaction_type.as_sql_str(),
+            &date,
+        )?;
+    }
+
     get(conn, id)?.ok_or(TransactionError::NotFound(id))
 }
 
@@ -499,6 +545,9 @@ pub fn set_archived(
     if affected == 0 {
         return Err(TransactionError::NotFound(id));
     }
+    // Archiving or unarchiving either way changes whether this transaction
+    // counts toward a reconciliation's cleared-balance sum (section 16).
+    crate::reconciliation::invalidate_if_linked(conn, id)?;
     get(conn, id)?.ok_or(TransactionError::NotFound(id))
 }
 
@@ -538,6 +587,10 @@ pub fn delete(conn: &Connection, id: i64) -> Result<(), TransactionError> {
         None => Err(TransactionError::NotFound(id)),
         Some(Some(_)) => Err(TransactionError::DeleteRequiresNoSource(id)),
         Some(None) => {
+            // Invalidate before the row is gone - removing a reconciled
+            // transaction always changes that period's cleared-balance sum
+            // (section 16).
+            crate::reconciliation::invalidate_if_linked(conn, id)?;
             conn.execute("DELETE FROM transactions WHERE id = ?1", params![id])?;
             Ok(())
         }
@@ -627,6 +680,8 @@ mod tests {
         conn.execute_batch(include_str!("../migrations/0009_import_engine_v2.sql"))
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0010_ofx_source_adapter.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../migrations/0011_reconciliation.sql"))
             .unwrap();
         conn
     }

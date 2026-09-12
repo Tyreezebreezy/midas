@@ -61,6 +61,12 @@ pub struct OfxStatement {
     pub account: SourceAccount,
     pub transactions: Vec<OfxTransaction>,
     pub ledger_balance: Option<StatementBalance>,
+    /// The statement period (`BANKTRANLIST`'s `DTSTART`/`DTEND`) - reconciliation
+    /// (specs/phase-011) uses this as a prefill suggestion, never an
+    /// automatic decision (the owner still confirms). `None` when either
+    /// tag is absent, which real-world OFX occasionally does.
+    pub statement_start_date: Option<String>,
+    pub statement_end_date: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -213,6 +219,8 @@ fn extract(xml: &str) -> Result<ParsedOfx, OfxError> {
     let mut current_currency: Option<String> = None;
     let mut current_transactions: Vec<OfxTransaction> = Vec::new();
     let mut current_ledger_balance = BalanceBuilder::default();
+    let mut current_statement_start: Option<String> = None;
+    let mut current_statement_end: Option<String> = None;
     let mut current_txn: Option<OfxTransaction> = None;
 
     loop {
@@ -240,6 +248,8 @@ fn extract(xml: &str) -> Result<ParsedOfx, OfxError> {
                         current_currency = None;
                         current_transactions = Vec::new();
                         current_ledger_balance = BalanceBuilder::default();
+                        current_statement_start = None;
+                        current_statement_end = None;
                     }
                     "CCSTMTRS" => {
                         in_statement = true;
@@ -248,6 +258,8 @@ fn extract(xml: &str) -> Result<ParsedOfx, OfxError> {
                         current_currency = None;
                         current_transactions = Vec::new();
                         current_ledger_balance = BalanceBuilder::default();
+                        current_statement_start = None;
+                        current_statement_end = None;
                     }
                     "STMTTRN" if in_statement => {
                         current_txn = Some(OfxTransaction::default());
@@ -289,6 +301,8 @@ fn extract(xml: &str) -> Result<ParsedOfx, OfxError> {
                                 }
                                 _ => None,
                             },
+                            statement_start_date: current_statement_start.clone(),
+                            statement_end_date: current_statement_end.clone(),
                         });
                         in_statement = false;
                     }
@@ -340,6 +354,12 @@ fn extract(xml: &str) -> Result<ParsedOfx, OfxError> {
                     }
                     "DTASOF" if parent_is(&stack, "LEDGERBAL") => {
                         current_ledger_balance.as_of_date = Some(text)
+                    }
+                    "DTSTART" if parent_is(&stack, "BANKTRANLIST") => {
+                        current_statement_start = Some(text)
+                    }
+                    "DTEND" if parent_is(&stack, "BANKTRANLIST") => {
+                        current_statement_end = Some(text)
                     }
                     _ => {}
                 }
@@ -595,6 +615,18 @@ NEWFILEUID:NONE
         let bal = stmt.ledger_balance.as_ref().unwrap();
         assert_eq!(bal.amount, "1995.50");
         assert_eq!(bal.as_of_date, "20260630120000");
+        assert_eq!(stmt.statement_start_date.as_deref(), Some("20260601"));
+        assert_eq!(stmt.statement_end_date.as_deref(), Some("20260630"));
+    }
+
+    #[test]
+    fn statement_period_is_none_when_the_file_never_states_one() {
+        let without_period = OFX_1X_CHECKING
+            .replace("<DTSTART>20260601\n", "")
+            .replace("<DTEND>20260630\n", "");
+        let parsed = parse(&without_period).unwrap();
+        assert_eq!(parsed.statements[0].statement_start_date, None);
+        assert_eq!(parsed.statements[0].statement_end_date, None);
     }
 
     #[test]

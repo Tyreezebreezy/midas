@@ -913,10 +913,22 @@ pub fn commit(
     )
 }
 
+/// OFX/QFX-only metadata a statement may carry (product handoff section 28
+/// for the balance, section 20 for the period) - CSV never sets any of
+/// this (section 21: CSV has no reliable statement-level data). Purely
+/// preserved provenance; a reconciliation (specs/phase-011) only ever
+/// offers it as a prefill suggestion, never applies it automatically.
+pub struct StatementMetadata {
+    pub balance_cents: i64,
+    pub balance_date: String,
+    pub start_date: Option<String>,
+    pub end_date: Option<String>,
+}
+
 /// The one place either adapter (CSV or OFX/QFX) ever writes a transaction
 /// or records an import (product handoff section 7: one shared commit
-/// path). `statement_balance` is OFX-only metadata (product handoff
-/// section 28); CSV always passes `None`.
+/// path). `statement_metadata` is OFX-only (see `StatementMetadata`); CSV
+/// always passes `None`.
 #[allow(clippy::too_many_arguments)]
 fn commit_staged(
     conn: &mut Connection,
@@ -926,15 +938,21 @@ fn commit_staged(
     file_hash: String,
     mapping_json: Option<String>,
     import_profile_id: Option<i64>,
-    statement_balance: Option<(i64, String)>,
+    statement_metadata: Option<StatementMetadata>,
     staged: &StagingResult,
     force_import_row_indices: &HashSet<usize>,
     excluded_row_indices: &HashSet<usize>,
 ) -> Result<ImportSummary, String> {
-    let (statement_balance_cents, statement_balance_date) = match statement_balance {
-        Some((cents, date)) => (Some(cents), Some(date)),
-        None => (None, None),
-    };
+    let (statement_balance_cents, statement_balance_date, statement_start_date, statement_end_date) =
+        match statement_metadata {
+            Some(m) => (
+                Some(m.balance_cents),
+                Some(m.balance_date),
+                m.start_date,
+                m.end_date,
+            ),
+            None => (None, None, None, None),
+        };
 
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let mut committed = 0usize;
@@ -945,8 +963,8 @@ fn commit_staged(
 
     let import_id: i64 = tx
         .query_row(
-            "INSERT INTO imports (account_id, source_filename, file_hash, row_count, committed_count, duplicate_count, needs_review_count, excluded_count, column_mapping_json, source_type, import_profile_id, statement_balance_cents, statement_balance_date)
-             VALUES (?1, ?2, ?3, ?4, 0, 0, 0, 0, ?5, ?6, ?7, ?8, ?9) RETURNING id",
+            "INSERT INTO imports (account_id, source_filename, file_hash, row_count, committed_count, duplicate_count, needs_review_count, excluded_count, column_mapping_json, source_type, import_profile_id, statement_balance_cents, statement_balance_date, statement_start_date, statement_end_date)
+             VALUES (?1, ?2, ?3, ?4, 0, 0, 0, 0, ?5, ?6, ?7, ?8, ?9, ?10, ?11) RETURNING id",
             params![
                 account_id,
                 source_filename,
@@ -957,6 +975,8 @@ fn commit_staged(
                 import_profile_id,
                 statement_balance_cents,
                 statement_balance_date,
+                statement_start_date,
+                statement_end_date,
             ],
             |row| row.get(0),
         )
@@ -1559,10 +1579,21 @@ pub fn commit_ofx(
         hasher.update(ofx_content.as_bytes());
         to_hex(&hasher.finalize())
     };
-    let statement_balance = statement.ledger_balance.as_ref().and_then(|b| {
+    let statement_metadata = statement.ledger_balance.as_ref().and_then(|b| {
         let cents = money::parse_amount_cents(&b.amount).ok()?;
-        let date = parse_ofx_date(&b.as_of_date).unwrap_or_else(|_| b.as_of_date.clone());
-        Some((cents, date))
+        let balance_date = parse_ofx_date(&b.as_of_date).unwrap_or_else(|_| b.as_of_date.clone());
+        Some(StatementMetadata {
+            balance_cents: cents,
+            balance_date,
+            start_date: statement
+                .statement_start_date
+                .as_deref()
+                .and_then(|d| parse_ofx_date(d).ok()),
+            end_date: statement
+                .statement_end_date
+                .as_deref()
+                .and_then(|d| parse_ofx_date(d).ok()),
+        })
     });
 
     commit_staged(
@@ -1577,7 +1608,7 @@ pub fn commit_ofx(
         // rather than a schema change for a column nothing reads back.
         Some("{}".to_string()),
         None,
-        statement_balance,
+        statement_metadata,
         &staged,
         force_import_row_indices,
         excluded_row_indices,
@@ -1870,6 +1901,8 @@ mod tests {
         conn.execute_batch(include_str!("../migrations/0009_import_engine_v2.sql"))
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0010_ofx_source_adapter.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../migrations/0011_reconciliation.sql"))
             .unwrap();
         conn
     }
@@ -3110,6 +3143,42 @@ mod tests {
         assert_eq!(source_type, "ofx");
         assert_eq!(statement_balance_cents, Some(199550));
         assert_eq!(statement_balance_date.as_deref(), Some("2026-06-30"));
+    }
+
+    const OFX_CHECKING_WITH_PERIOD: &str = "OFXHEADER:100\nDATA:OFXSGML\nVERSION:102\nSECURITY:NONE\nENCODING:USASCII\nCHARSET:1252\nCOMPRESSION:NONE\nOLDFILEUID:NONE\nNEWFILEUID:NONE\n\n<OFX>\n<BANKMSGSRSV1>\n<STMTTRNRS>\n<STMTRS>\n<CURDEF>USD\n<BANKACCTFROM>\n<BANKID>111000025\n<ACCTID>0001112223\n<ACCTTYPE>CHECKING\n</BANKACCTFROM>\n<BANKTRANLIST>\n<DTSTART>20260601\n<DTEND>20260630\n<STMTTRN>\n<TRNTYPE>DEBIT\n<DTPOSTED>20260601120000\n<TRNAMT>-4.50\n<FITID>FIT-001\n<NAME>SAMPLE COFFEE MERCHANT\n</STMTTRN>\n</BANKTRANLIST>\n<LEDGERBAL>\n<BALAMT>1995.50\n<DTASOF>20260630120000\n</LEDGERBAL>\n</STMTRS>\n</STMTTRNRS>\n</BANKMSGSRSV1>\n</OFX>\n";
+
+    #[test]
+    fn ofx_statement_period_is_preserved_and_surfaced_as_a_reconciliation_hint() {
+        // product handoff section 20: Batch 3 preserved the ending balance
+        // but discarded DTSTART/DTEND entirely - this proves the Batch 4
+        // extension threads the period all the way through to where
+        // reconciliation.rs's prefill hint reads it back.
+        let mut conn = test_conn();
+        let account_id = make_account(&conn, AccountType::Checking);
+        let summary = commit_ofx_simple(
+            &mut conn,
+            account_id,
+            "statement.ofx",
+            OFX_CHECKING_WITH_PERIOD,
+        )
+        .unwrap();
+
+        let (start, end): (Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT statement_start_date, statement_end_date FROM imports WHERE id = ?1",
+                params![summary.import_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(start.as_deref(), Some("2026-06-01"));
+        assert_eq!(end.as_deref(), Some("2026-06-30"));
+
+        let hint = crate::reconciliation::latest_statement_hint(&conn, account_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(hint.statement_start_date.as_deref(), Some("2026-06-01"));
+        assert_eq!(hint.statement_end_date.as_deref(), Some("2026-06-30"));
+        assert_eq!(hint.statement_ending_balance_cents, 199550);
     }
 
     #[test]
