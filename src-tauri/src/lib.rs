@@ -5,16 +5,19 @@ mod budgets;
 mod dates;
 mod db;
 mod import;
+mod import_profiles;
 mod money;
 mod needs_review;
 mod overview;
 mod pay_cycle;
+mod payees;
 mod recurring;
 mod reports;
 mod rules;
 mod safe_to_spend;
 mod savings_goals;
 mod settings;
+mod tags;
 mod transactions;
 
 use db::DbState;
@@ -40,6 +43,7 @@ pub fn run() {
             transactions::create_transaction,
             transactions::update_transaction,
             transactions::set_transaction_archived,
+            transactions::set_transaction_reconciliation_status,
             transactions::delete_transaction,
             transactions::export_transactions_csv,
             import::preview_csv,
@@ -80,6 +84,21 @@ pub fn run() {
             backup::create_backup_command,
             backup::preview_restore_command,
             backup::restore_backup_command,
+            payees::list_payees,
+            payees::create_payee,
+            payees::update_payee,
+            payees::set_payee_archived,
+            payees::merge_payees,
+            tags::list_tags,
+            tags::create_tag,
+            tags::delete_tag,
+            tags::attach_tag,
+            tags::detach_tag,
+            tags::list_tags_for_transaction,
+            import_profiles::list_import_profiles,
+            import_profiles::create_import_profile,
+            import_profiles::update_import_profile,
+            import_profiles::delete_import_profile,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Tauri application");

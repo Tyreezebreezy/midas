@@ -30,6 +30,46 @@ pub enum TransactionType {
     BalanceAdjustment,
 }
 
+/// The owner's own statement-reconciliation lifecycle (Foundation Batch 1 -
+/// specs/phase-008). Distinct from `is_pending`, which is a bank-reported
+/// temporary-hold state independent of whether the owner has reconciled
+/// against a statement. Not settable via `TransactionInput` - like
+/// `is_archived`, it has its own narrow setter
+/// (`set_transaction_reconciliation_status`) rather than living in the
+/// general create/update path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReconciliationStatus {
+    Unreconciled,
+    Cleared,
+    Reconciled,
+}
+
+impl ReconciliationStatus {
+    fn as_sql_str(self) -> &'static str {
+        match self {
+            ReconciliationStatus::Unreconciled => "unreconciled",
+            ReconciliationStatus::Cleared => "cleared",
+            ReconciliationStatus::Reconciled => "reconciled",
+        }
+    }
+
+    fn from_sql_str(s: &str) -> rusqlite::Result<Self> {
+        Ok(match s {
+            "unreconciled" => ReconciliationStatus::Unreconciled,
+            "cleared" => ReconciliationStatus::Cleared,
+            "reconciled" => ReconciliationStatus::Reconciled,
+            other => {
+                return Err(rusqlite::Error::InvalidColumnType(
+                    0,
+                    format!("unknown reconciliation_status '{other}' in database"),
+                    rusqlite::types::Type::Text,
+                ))
+            }
+        })
+    }
+}
+
 impl TransactionType {
     pub(crate) fn as_sql_str(self) -> &'static str {
         match self {
@@ -82,6 +122,25 @@ pub struct Transaction {
     pub source_row_hash: Option<String>,
     pub transfer_pair_transaction_id: Option<i64>,
     pub refund_of_transaction_id: Option<i64>,
+    /// Foundation Batch 1 (specs/phase-008) - not yet populated by any
+    /// feature. `merchant` above remains the authoritative display value
+    /// until a later batch implements Payee Library normalization/linking.
+    pub payee_id: Option<i64>,
+    /// Foundation Batch 1 - not yet populated. A future split-transaction
+    /// feature will point each child row at the original it was split from;
+    /// the original is expected to be archived at that point (already
+    /// excluded from every balance/spending query), so a populated parent
+    /// is never double-counted once that feature lands.
+    pub split_parent_transaction_id: Option<i64>,
+    /// Foundation Batch 1 - not yet populated. The source's own unique
+    /// transaction ID (e.g. OFX `<TRNUID>`), for a future importer that has
+    /// a stronger dedup signal than `source_row_hash`.
+    pub external_transaction_id: Option<String>,
+    pub reconciliation_status: ReconciliationStatus,
+    /// Foundation Batch 1 - not yet settable from the UI. An analytical
+    /// flag a future feature can use to exclude a one-off purchase from a
+    /// budget-suggestion or recurring-detection baseline.
+    pub is_one_time: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -145,7 +204,9 @@ impl From<rusqlite::Error> for TransactionError {
 
 const COLUMNS: &str = "id, account_id, transaction_date, posted_date, amount_cents, transaction_type, \
     raw_description, merchant, category, subcategory, notes, tags, is_pending, is_archived, review_status, \
-    source_import_id, source_row_hash, transfer_pair_transaction_id, refund_of_transaction_id, created_at, updated_at";
+    source_import_id, source_row_hash, transfer_pair_transaction_id, refund_of_transaction_id, \
+    payee_id, split_parent_transaction_id, external_transaction_id, reconciliation_status, is_one_time, \
+    created_at, updated_at";
 
 fn row_to_transaction(row: &rusqlite::Row) -> rusqlite::Result<Transaction> {
     Ok(Transaction {
@@ -170,6 +231,13 @@ fn row_to_transaction(row: &rusqlite::Row) -> rusqlite::Result<Transaction> {
         source_row_hash: row.get("source_row_hash")?,
         transfer_pair_transaction_id: row.get("transfer_pair_transaction_id")?,
         refund_of_transaction_id: row.get("refund_of_transaction_id")?,
+        payee_id: row.get("payee_id")?,
+        split_parent_transaction_id: row.get("split_parent_transaction_id")?,
+        external_transaction_id: row.get("external_transaction_id")?,
+        reconciliation_status: ReconciliationStatus::from_sql_str(
+            &row.get::<_, String>("reconciliation_status")?,
+        )?,
+        is_one_time: row.get::<_, i64>("is_one_time")? != 0,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
     })
@@ -425,6 +493,26 @@ pub fn set_archived(
     get(conn, id)?.ok_or(TransactionError::NotFound(id))
 }
 
+/// The owner's own reconciliation lifecycle - editable even on a
+/// `Reconciled` transaction (per product handoff section 19/new-cycle
+/// section 7's reconciliation rules, MIDAS never blocks an edit, only warns
+/// in the UI that a verified period may need re-checking - the warning
+/// itself is a future batch's job, this is just the data mutation).
+pub fn set_reconciliation_status(
+    conn: &Connection,
+    id: i64,
+    status: ReconciliationStatus,
+) -> Result<Transaction, TransactionError> {
+    let affected = conn.execute(
+        "UPDATE transactions SET reconciliation_status = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?2",
+        params![status.as_sql_str(), id],
+    )?;
+    if affected == 0 {
+        return Err(TransactionError::NotFound(id));
+    }
+    get(conn, id)?.ok_or(TransactionError::NotFound(id))
+}
+
 /// Hard delete is allowed only for transactions with no import source - a
 /// manual entry the user made in error. Imported transactions can only be
 /// archived, never deleted, so import history always stays reconstructable
@@ -492,6 +580,16 @@ pub fn set_transaction_archived(
 }
 
 #[tauri::command]
+pub fn set_transaction_reconciliation_status(
+    state: State<DbState>,
+    id: i64,
+    status: ReconciliationStatus,
+) -> Result<Transaction, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    set_reconciliation_status(&conn, id, status).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn delete_transaction(state: State<DbState>, id: i64) -> Result<(), String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     delete(&conn, id).map_err(|e| e.to_string())
@@ -514,6 +612,8 @@ mod tests {
         conn.execute_batch(include_str!("../migrations/0004_accounting_boundary.sql"))
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0007_balance_adjustment.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../migrations/0008_foundation_batch_1.sql"))
             .unwrap();
         conn
     }
@@ -810,6 +910,67 @@ mod tests {
         let created = create(&conn, &refund).unwrap();
         assert_eq!(created.transaction_type, TransactionType::Refund);
         assert_ne!(created.transaction_type, TransactionType::Income);
+    }
+
+    #[test]
+    fn new_foundation_batch_1_fields_default_sanely_on_a_freshly_created_transaction() {
+        let conn = test_conn();
+        let account_id = make_account(&conn, AccountType::Checking);
+        let created = create(&conn, &sample_input(account_id)).unwrap();
+        assert_eq!(created.payee_id, None);
+        assert_eq!(created.split_parent_transaction_id, None);
+        assert_eq!(created.external_transaction_id, None);
+        assert_eq!(
+            created.reconciliation_status,
+            ReconciliationStatus::Unreconciled
+        );
+        assert!(!created.is_one_time);
+    }
+
+    #[test]
+    fn set_reconciliation_status_updates_and_is_independent_of_is_pending() {
+        let conn = test_conn();
+        let account_id = make_account(&conn, AccountType::Checking);
+        let created = create(&conn, &sample_input(account_id)).unwrap();
+        assert_eq!(
+            created.reconciliation_status,
+            ReconciliationStatus::Unreconciled
+        );
+
+        let cleared =
+            set_reconciliation_status(&conn, created.id, ReconciliationStatus::Cleared).unwrap();
+        assert_eq!(cleared.reconciliation_status, ReconciliationStatus::Cleared);
+        assert_eq!(cleared.is_pending, None, "unrelated to is_pending");
+
+        let reconciled =
+            set_reconciliation_status(&conn, created.id, ReconciliationStatus::Reconciled).unwrap();
+        assert_eq!(
+            reconciled.reconciliation_status,
+            ReconciliationStatus::Reconciled
+        );
+
+        // Editing a reconciled transaction must still succeed (the UI, not
+        // the data layer, is responsible for warning that a verified period
+        // may need re-checking) - the constitution's "no silent destructive
+        // behavior" is about not losing data, not about freezing edits.
+        let mut edit = sample_input(account_id);
+        edit.amount_cents = -9999;
+        let updated = update(&conn, created.id, &edit).unwrap();
+        assert_eq!(updated.amount_cents, -9999);
+        assert_eq!(
+            updated.reconciliation_status,
+            ReconciliationStatus::Reconciled,
+            "a normal field edit must not silently reset reconciliation status"
+        );
+    }
+
+    #[test]
+    fn set_reconciliation_status_on_missing_transaction_errors() {
+        let conn = test_conn();
+        assert!(matches!(
+            set_reconciliation_status(&conn, 999, ReconciliationStatus::Cleared),
+            Err(TransactionError::NotFound(999))
+        ));
     }
 
     #[test]
