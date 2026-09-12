@@ -121,7 +121,9 @@ parsing code.
 ## Bugs found and fixed during native verification
 
 Both were caught by actually exercising the feature through real IPC against
-a live database, not by code review:
+a live database, not by code review (a third, the unlabeled mapping
+selects, is documented separately below since it surfaced during the
+accessibility pass rather than the functional one):
 
 1. **Cross-account profile recognition.** The original `recognize()` only
    used account scope as a _tie-breaker_ among ambiguous matches, not a hard
@@ -187,6 +189,20 @@ wholesale into the transaction - only the fields the ledger already models.
 - Reachable from Transactions via a new "Import History" button, reusing
   the existing `.account-dialog` pattern rather than a new sidebar route.
 
+## A third bug found: unlabeled mapping selects
+
+Live accessibility verification (walking every focusable element in the
+map step and checking its computed accessible name) found that
+`MappingRow`'s `<label>` and `<select>` were only ever visually associated
+via CSS grid, never programmatically via `htmlFor`/`id` - a pre-existing
+gap (the component was unchanged from before this batch), surfaced now
+because this batch added a sixth call site (Transaction ID) and because
+this was the first time the workflow was checked this way. Fixed by giving
+each `MappingRow` instance a stable id via React's `useId()`. Re-verified
+live: all 11 focusable controls in the map step now report a correct
+accessible name, and the existing gold focus-visible outline (already
+established, not touched) is intact.
+
 ## Explicit non-goals (unchanged from the handoff)
 
 OFX/QFX/PDF parsing, Recurring Expected-vs-Posted matching, full
@@ -211,6 +227,10 @@ UI, matching the same accepted gap Payees already has.
       above were found and fixed, once after on a fresh database).
 - [x] 1280x800 and 1024x640 checked for the wizard's map step and Import
       History - no horizontal overflow (`scrollWidth <= innerWidth`).
+- [x] Accessibility: every focusable control in the map step has a correct
+      programmatic accessible name (verified live, not assumed); the
+      pre-existing gold focus-visible outline is intact; status is
+      conveyed by text labels, never color alone.
 
 ## Owner decisions
 

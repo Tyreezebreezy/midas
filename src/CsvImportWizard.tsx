@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type {
   Account,
   ColumnMapping,
@@ -639,10 +639,12 @@ function MappingRow({
   headers: string[];
   onChange: (v: string | null) => void;
 }) {
+  const id = useId();
   return (
     <div className="field mapping-row">
-      <label>{label}</label>
+      <label htmlFor={id}>{label}</label>
       <select
+        id={id}
         value={value ?? ""}
         onChange={(e) =>
           onChange(e.target.value === "" ? null : e.target.value)
