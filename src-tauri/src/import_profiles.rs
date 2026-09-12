@@ -1,8 +1,7 @@
-//! Named, reusable CSV/OFX/QFX column-mapping memory per institution/account
-//! (Foundation Batch 1 - specs/phase-008). Product handoff: "select bank
-//! file -> MIDAS recognizes the profile -> preview -> import." This batch
-//! is the storage only - matching a profile to an incoming file is Import
-//! Engine v2's job. `account_id: None` means the profile applies to any
+//! Named, reusable CSV/OFX/QFX column-mapping memory per institution/account.
+//! Storage and CRUD landed in Foundation Batch 1 (specs/phase-008); matching
+//! a profile to an incoming file (`recognize`, below) is Import Engine v2
+//! (specs/phase-009). `account_id: None` means the profile applies to any
 //! account, mirroring `merchant_rules`' existing global-vs-account-specific
 //! convention (`rules.rs`). Reuses `import::ColumnMapping` as its stored
 //! shape rather than inventing a second one - both round-trip through the
@@ -55,6 +54,7 @@ pub struct ImportProfile {
     pub account_id: Option<i64>,
     pub source_type: ImportSourceType,
     pub column_mapping: ColumnMapping,
+    pub is_archived: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -91,7 +91,7 @@ impl From<rusqlite::Error> for ImportProfileError {
 }
 
 const COLUMNS: &str =
-    "id, name, account_id, source_type, column_mapping_json, created_at, updated_at";
+    "id, name, account_id, source_type, column_mapping_json, is_archived, created_at, updated_at";
 
 fn row_to_profile(row: &rusqlite::Row) -> rusqlite::Result<ImportProfile> {
     let mapping_json: String = row.get("column_mapping_json")?;
@@ -104,6 +104,7 @@ fn row_to_profile(row: &rusqlite::Row) -> rusqlite::Result<ImportProfile> {
         account_id: row.get("account_id")?,
         source_type: ImportSourceType::from_sql_str(&row.get::<_, String>("source_type")?)?,
         column_mapping,
+        is_archived: row.get::<_, i64>("is_archived")? != 0,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
     })
@@ -151,15 +152,113 @@ pub fn create(
 }
 
 /// Every profile, account-specific ones first - mirrors `rules::list`'s
-/// existing global-vs-account-specific ordering. Matching one to an
-/// incoming file is Import Engine v2's job, not this batch's.
-pub fn list(conn: &Connection) -> Result<Vec<ImportProfile>, ImportProfileError> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {COLUMNS} FROM import_profiles ORDER BY account_id IS NULL, name COLLATE NOCASE"
-    ))?;
+/// existing global-vs-account-specific ordering. Archived profiles are
+/// excluded by default, matching every other archivable model in this
+/// codebase (`accounts::list`, `payees::list`).
+pub fn list(
+    conn: &Connection,
+    include_archived: bool,
+) -> Result<Vec<ImportProfile>, ImportProfileError> {
+    let sql = if include_archived {
+        format!("SELECT {COLUMNS} FROM import_profiles ORDER BY account_id IS NULL, name COLLATE NOCASE")
+    } else {
+        format!("SELECT {COLUMNS} FROM import_profiles WHERE is_archived = 0 ORDER BY account_id IS NULL, name COLLATE NOCASE")
+    };
+    let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([], row_to_profile)?;
     rows.collect::<rusqlite::Result<Vec<_>>>()
         .map_err(ImportProfileError::from)
+}
+
+pub fn set_archived(
+    conn: &Connection,
+    id: i64,
+    archived: bool,
+) -> Result<ImportProfile, ImportProfileError> {
+    let affected = conn.execute(
+        "UPDATE import_profiles SET is_archived = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?2",
+        params![archived as i64, id],
+    )?;
+    if affected == 0 {
+        return Err(ImportProfileError::NotFound(id));
+    }
+    get(conn, id)?.ok_or(ImportProfileError::NotFound(id))
+}
+
+/// Conservative compatibility check (product handoff section 8): every
+/// column name the profile depends on (`ColumnMapping::required_headers`)
+/// must be verbatim present in the new file's own header row. No fuzzy
+/// matching, no partial credit - a profile missing even one of its expected
+/// columns is not a match. A profile with nothing mapped can never match -
+/// that's not a real profile the wizard would have offered to save, since
+/// saving requires a usable mapping first.
+fn is_compatible(profile: &ImportProfile, headers: &[String]) -> bool {
+    let required = profile.column_mapping.required_headers();
+    !required.is_empty()
+        && required
+            .iter()
+            .all(|needed| headers.iter().any(|h| h == needed))
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum ProfileRecognition {
+    Clear { profile: Box<ImportProfile> },
+    Ambiguous { profiles: Vec<ImportProfile> },
+    None,
+}
+
+/// Conservative profile recognition (product handoff section 8): suggests a
+/// saved profile only when it is unambiguous, and never reinterprets a file
+/// on a weak signal. A profile scoped to a specific account (`account_id:
+/// Some`) is never even considered for a different account - that scoping
+/// is the user's own explicit statement that the mapping is for that
+/// account only, so a header-only match elsewhere would be exactly the kind
+/// of weak signal this function must not act on. Among profiles usable for
+/// this account (global, or scoped to it), a tie beyond one compatible
+/// match is surfaced to the user rather than silently picked.
+pub fn recognize(
+    profiles: &[ImportProfile],
+    headers: &[String],
+    account_id: Option<i64>,
+) -> ProfileRecognition {
+    let usable_for_account: Vec<&ImportProfile> = profiles
+        .iter()
+        .filter(|p| p.account_id.is_none() || p.account_id == account_id)
+        .collect();
+    let compatible: Vec<&ImportProfile> = usable_for_account
+        .into_iter()
+        .filter(|p| is_compatible(p, headers))
+        .collect();
+    if compatible.is_empty() {
+        return ProfileRecognition::None;
+    }
+    if compatible.len() == 1 {
+        return ProfileRecognition::Clear {
+            profile: Box::new(compatible[0].clone()),
+        };
+    }
+
+    // Still ambiguous: prefer a profile scoped exactly to this account over
+    // an equally-compatible global one, if that narrows it to one.
+    let same_account: Vec<&ImportProfile> = compatible
+        .iter()
+        .copied()
+        .filter(|p| account_id.is_some() && p.account_id == account_id)
+        .collect();
+    if same_account.len() == 1 {
+        return ProfileRecognition::Clear {
+            profile: Box::new(same_account[0].clone()),
+        };
+    }
+    let ambiguous = if !same_account.is_empty() {
+        same_account
+    } else {
+        compatible
+    };
+    ProfileRecognition::Ambiguous {
+        profiles: ambiguous.into_iter().cloned().collect(),
+    }
 }
 
 pub fn update(
@@ -198,9 +297,22 @@ pub fn delete(conn: &Connection, id: i64) -> Result<(), ImportProfileError> {
 }
 
 #[tauri::command]
-pub fn list_import_profiles(state: State<DbState>) -> Result<Vec<ImportProfile>, String> {
+pub fn list_import_profiles(
+    state: State<DbState>,
+    include_archived: bool,
+) -> Result<Vec<ImportProfile>, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
-    list(&conn).map_err(|e| e.to_string())
+    list(&conn, include_archived).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_import_profile_archived(
+    state: State<DbState>,
+    id: i64,
+    archived: bool,
+) -> Result<ImportProfile, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    set_archived(&conn, id, archived).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -248,6 +360,8 @@ mod tests {
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0008_foundation_batch_1.sql"))
             .unwrap();
+        conn.execute_batch(include_str!("../migrations/0009_import_engine_v2.sql"))
+            .unwrap();
         conn
     }
 
@@ -264,6 +378,8 @@ mod tests {
                 debit_column: None,
                 credit_column: None,
                 category_column: None,
+                external_id_column: None,
+                invert_amount: false,
             },
         }
     }
@@ -338,7 +454,7 @@ mod tests {
         specific.account_id = Some(account_id);
         create(&conn, &specific).unwrap();
 
-        let all = list(&conn).unwrap();
+        let all = list(&conn, false).unwrap();
         assert_eq!(all[0].name, "Checking-specific");
         assert_eq!(all[1].name, "Global CSV");
     }
@@ -365,6 +481,216 @@ mod tests {
         assert!(matches!(
             delete(&conn, 999),
             Err(ImportProfileError::NotFound(999))
+        ));
+    }
+
+    #[test]
+    fn set_archived_toggles_and_is_excluded_from_list_by_default() {
+        let conn = test_conn();
+        let created = create(&conn, &sample_input()).unwrap();
+
+        let archived = set_archived(&conn, created.id, true).unwrap();
+        assert!(archived.is_archived);
+        assert!(list(&conn, false).unwrap().is_empty());
+        assert_eq!(list(&conn, true).unwrap().len(), 1);
+
+        let restored = set_archived(&conn, created.id, false).unwrap();
+        assert!(!restored.is_archived);
+        assert_eq!(list(&conn, false).unwrap().len(), 1);
+
+        assert!(matches!(
+            set_archived(&conn, 999, true),
+            Err(ImportProfileError::NotFound(999))
+        ));
+    }
+
+    #[test]
+    fn a_profile_used_by_an_import_cannot_be_deleted_but_can_be_archived() {
+        // Found via native verification: once a profile has been used for
+        // an import, imports.import_profile_id's foreign key makes hard
+        // delete impossible - archiving is the only way to retire it.
+        let conn = test_conn();
+        let account_id = accounts::create(
+            &conn,
+            &AccountInput {
+                name: "Checking".to_string(),
+                institution: None,
+                account_type: AccountType::Checking,
+                include_in_net_worth: true,
+                notes: None,
+            },
+        )
+        .unwrap()
+        .id;
+        let profile = create(&conn, &sample_input()).unwrap();
+        conn.execute(
+            "INSERT INTO imports (account_id, source_filename, file_hash, row_count, committed_count, duplicate_count, needs_review_count, column_mapping_json, import_profile_id)
+             VALUES (?1, 'test.csv', 'hash', 1, 1, 0, 0, '{}', ?2)",
+            params![account_id, profile.id],
+        )
+        .unwrap();
+
+        assert!(matches!(
+            delete(&conn, profile.id),
+            Err(ImportProfileError::Db(_))
+        ));
+        assert!(set_archived(&conn, profile.id, true).is_ok());
+        assert!(list(&conn, false).unwrap().is_empty());
+    }
+
+    fn headers(names: &[&str]) -> Vec<String> {
+        names.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn recognize_is_clear_when_exactly_one_profile_is_compatible() {
+        let conn = test_conn();
+        let profile = create(&conn, &sample_input()).unwrap(); // Date, Description, Amount
+        let all = list(&conn, false).unwrap();
+
+        let result = recognize(&all, &headers(&["Date", "Description", "Amount"]), None);
+        assert!(matches!(
+            result,
+            ProfileRecognition::Clear { profile: p } if p.id == profile.id
+        ));
+
+        // Extra columns in the file beyond what the profile needs are fine.
+        let result = recognize(
+            &all,
+            &headers(&["Date", "Description", "Amount", "Balance"]),
+            None,
+        );
+        assert!(matches!(result, ProfileRecognition::Clear { .. }));
+    }
+
+    #[test]
+    fn recognize_is_none_when_a_required_column_is_missing() {
+        let conn = test_conn();
+        create(&conn, &sample_input()).unwrap();
+        let all = list(&conn, false).unwrap();
+
+        // No "Amount" column - the profile cannot be applied as-is.
+        let result = recognize(&all, &headers(&["Date", "Description"]), None);
+        assert!(matches!(result, ProfileRecognition::None));
+    }
+
+    #[test]
+    fn recognize_is_ambiguous_with_two_equally_compatible_global_profiles() {
+        let conn = test_conn();
+        let mut second = sample_input();
+        second.name = "Second Bank".to_string();
+        create(&conn, &sample_input()).unwrap();
+        create(&conn, &second).unwrap();
+        let all = list(&conn, false).unwrap();
+
+        let result = recognize(&all, &headers(&["Date", "Description", "Amount"]), None);
+        match result {
+            ProfileRecognition::Ambiguous { profiles } => assert_eq!(profiles.len(), 2),
+            other => panic!("expected Ambiguous, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn recognize_prefers_the_profile_scoped_to_the_selected_account() {
+        let conn = test_conn();
+        let account_id = accounts::create(
+            &conn,
+            &AccountInput {
+                name: "Checking".to_string(),
+                institution: None,
+                account_type: AccountType::Checking,
+                include_in_net_worth: true,
+                notes: None,
+            },
+        )
+        .unwrap()
+        .id;
+
+        let mut global = sample_input();
+        global.name = "Global CSV".to_string();
+        create(&conn, &global).unwrap();
+        let mut specific = sample_input();
+        specific.name = "Checking-specific".to_string();
+        specific.account_id = Some(account_id);
+        let specific = create(&conn, &specific).unwrap();
+
+        let all = list(&conn, false).unwrap();
+        let result = recognize(
+            &all,
+            &headers(&["Date", "Description", "Amount"]),
+            Some(account_id),
+        );
+        assert!(matches!(
+            result,
+            ProfileRecognition::Clear { profile: p } if p.id == specific.id
+        ));
+    }
+
+    #[test]
+    fn recognize_returns_none_with_no_saved_profiles() {
+        assert!(matches!(
+            recognize(&[], &headers(&["Date"]), None),
+            ProfileRecognition::None
+        ));
+    }
+
+    #[test]
+    fn recognize_never_suggests_a_profile_scoped_to_a_different_account() {
+        // Found via native verification: a profile scoped to one account is
+        // the user's own explicit statement that it's for that account only
+        // - matching headers alone must never be enough to suggest it for
+        // an unrelated account, even when it's the only compatible profile
+        // that exists at all.
+        let conn = test_conn();
+        let account_a = accounts::create(
+            &conn,
+            &AccountInput {
+                name: "Account A".to_string(),
+                institution: None,
+                account_type: AccountType::Checking,
+                include_in_net_worth: true,
+                notes: None,
+            },
+        )
+        .unwrap()
+        .id;
+        let account_b = accounts::create(
+            &conn,
+            &AccountInput {
+                name: "Account B".to_string(),
+                institution: None,
+                account_type: AccountType::Checking,
+                include_in_net_worth: true,
+                notes: None,
+            },
+        )
+        .unwrap()
+        .id;
+
+        let mut scoped = sample_input();
+        scoped.account_id = Some(account_a);
+        create(&conn, &scoped).unwrap();
+
+        let all = list(&conn, false).unwrap();
+        let result = recognize(
+            &all,
+            &headers(&["Date", "Description", "Amount"]),
+            Some(account_b),
+        );
+        assert!(
+            matches!(result, ProfileRecognition::None),
+            "a profile scoped to account A must not be suggested for account B"
+        );
+
+        // The same profile IS recognized for the account it's actually scoped to.
+        let result_correct_account = recognize(
+            &all,
+            &headers(&["Date", "Description", "Amount"]),
+            Some(account_a),
+        );
+        assert!(matches!(
+            result_correct_account,
+            ProfileRecognition::Clear { .. }
         ));
     }
 }

@@ -267,6 +267,8 @@ mod tests {
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0008_foundation_batch_1.sql"))
             .unwrap();
+        conn.execute_batch(include_str!("../migrations/0009_import_engine_v2.sql"))
+            .unwrap();
         conn
     }
 
@@ -428,6 +430,7 @@ mod tests {
                 date_to: None,
                 include_archived: false,
                 needs_review_only: false,
+                source_import_id: None,
             },
         )
         .unwrap()

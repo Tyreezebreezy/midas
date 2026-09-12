@@ -11,6 +11,7 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0006_savings_goals.sql"),
     include_str!("../migrations/0007_balance_adjustment.sql"),
     include_str!("../migrations/0008_foundation_batch_1.sql"),
+    include_str!("../migrations/0009_import_engine_v2.sql"),
 ];
 
 /// The schema version this build knows how to read and write - always
@@ -270,7 +271,7 @@ mod tests {
             conn.execute_batch(sql).unwrap();
         }
         conn.pragma_update(None, "user_version", 7).unwrap();
-        assert_eq!(MIGRATIONS.len(), 8, "this test targets exactly the v0.1.0 -> Foundation Batch 1 boundary; update the slice above if more migrations are added before this one");
+        assert_eq!(MIGRATIONS.len(), 9, "this test targets exactly the v0.1.0 -> Foundation Batch 1 boundary; update the slice above if more migrations are added before this one");
 
         conn.execute(
             "INSERT INTO accounts (id, name, institution, account_type, include_in_net_worth, notes)
@@ -349,7 +350,13 @@ mod tests {
         )
         .unwrap();
 
-        migrate(&conn).unwrap();
+        // Applies only migration 0008 directly (not the shared `migrate`,
+        // which would also carry this fixture through every later migration
+        // too) so this test stays isolated to exactly the 0007 -> 0008
+        // boundary it names, regardless of how many migrations exist after
+        // it.
+        conn.execute_batch(MIGRATIONS[7]).unwrap();
+        conn.pragma_update(None, "user_version", 8).unwrap();
 
         let version: i32 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
@@ -457,5 +464,74 @@ mod tests {
                 .unwrap();
             assert_eq!(count, 0, "{table} must exist and start empty");
         }
+    }
+
+    /// Import Engine v2 (specs/phase-009) adds three small columns to
+    /// `imports` only - no new tables, no transaction columns. Same proof
+    /// shape as the 0008 test above, scoped to the 0008 -> 0009 boundary.
+    #[test]
+    fn migration_0009_preserves_existing_imports_and_defaults_new_columns_sanely() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        for sql in &MIGRATIONS[0..8] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 8).unwrap();
+        assert_eq!(MIGRATIONS.len(), 9, "this test targets exactly the Foundation Batch 1 -> Import Engine v2 boundary; update the slice above if more migrations are added before this one");
+
+        conn.execute(
+            "INSERT INTO accounts (id, name, account_type, include_in_net_worth) VALUES (1, 'Checking', 'checking', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO imports (id, account_id, source_filename, file_hash, row_count, committed_count, duplicate_count, needs_review_count, column_mapping_json)
+             VALUES (1, 1, 'august.csv', 'deadbeef', 10, 8, 1, 1, '{\"date_column\":\"Date\"}')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO import_profiles (id, name, source_type, column_mapping_json)
+             VALUES (1, 'My Bank', 'csv', '{\"date_column\":\"Date\"}')",
+            [],
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+
+        let version: i32 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 9);
+
+        let (filename, committed_count): (String, i64) = conn
+            .query_row(
+                "SELECT source_filename, committed_count FROM imports WHERE id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(filename, "august.csv");
+        assert_eq!(committed_count, 8);
+
+        let (excluded_count, undone_at, undone_removed_count): (i64, Option<String>, Option<i64>) =
+            conn.query_row(
+                "SELECT excluded_count, undone_at, undone_removed_count FROM imports WHERE id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(excluded_count, 0);
+        assert_eq!(undone_at, None);
+        assert_eq!(undone_removed_count, None);
+
+        let profile_is_archived: i64 = conn
+            .query_row(
+                "SELECT is_archived FROM import_profiles WHERE id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(profile_is_archived, 0);
     }
 }

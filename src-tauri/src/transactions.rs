@@ -172,6 +172,11 @@ pub struct TransactionFilter {
     pub include_archived: bool,
     #[serde(default)]
     pub needs_review_only: bool,
+    /// Import History's detail view (Import Engine v2, specs/phase-009):
+    /// every transaction a specific import produced, regardless of what
+    /// else has happened to them since.
+    #[serde(default)]
+    pub source_import_id: Option<i64>,
 }
 
 #[derive(Debug)]
@@ -349,6 +354,10 @@ pub fn list(
     }
     if filter.needs_review_only {
         clauses.push("review_status = 'needs_review'".to_string());
+    }
+    if let Some(source_import_id) = filter.source_import_id {
+        clauses.push(format!("source_import_id = ?{}", args.len() + 1));
+        args.push(Box::new(source_import_id));
     }
 
     let where_sql = if clauses.is_empty() {
@@ -615,6 +624,8 @@ mod tests {
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0008_foundation_batch_1.sql"))
             .unwrap();
+        conn.execute_batch(include_str!("../migrations/0009_import_engine_v2.sql"))
+            .unwrap();
         conn
     }
 
@@ -860,6 +871,37 @@ mod tests {
         .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].transaction_date, "2026-01-01");
+    }
+
+    #[test]
+    fn source_import_id_filter_isolates_one_imports_transactions() {
+        let conn = test_conn();
+        let account_id = make_account(&conn, AccountType::Checking);
+        let manual = create(&conn, &sample_input(account_id)).unwrap();
+        conn.execute(
+            "INSERT INTO imports (account_id, source_filename, file_hash, row_count, committed_count, duplicate_count, needs_review_count, column_mapping_json)
+             VALUES (?1, 'test.csv', 'hash', 1, 1, 0, 0, '{}')",
+            params![account_id],
+        )
+        .unwrap();
+        let imported = create(&conn, &sample_input(account_id)).unwrap();
+        conn.execute(
+            "UPDATE transactions SET source_import_id = 1 WHERE id = ?1",
+            params![imported.id],
+        )
+        .unwrap();
+
+        let results = list(
+            &conn,
+            &TransactionFilter {
+                source_import_id: Some(1),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, imported.id);
+        assert_ne!(results[0].id, manual.id);
     }
 
     #[test]

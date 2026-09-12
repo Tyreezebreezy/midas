@@ -49,6 +49,9 @@ pub fn run() {
             import::preview_csv,
             import::stage_import,
             import::commit_import,
+            import::list_imports,
+            import::preview_undo_import,
+            import::undo_import,
             needs_review::list_needs_review,
             needs_review::resolve_needs_review,
             rules::list_rules,
@@ -99,6 +102,7 @@ pub fn run() {
             import_profiles::create_import_profile,
             import_profiles::update_import_profile,
             import_profiles::delete_import_profile,
+            import_profiles::set_import_profile_archived,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Tauri application");
