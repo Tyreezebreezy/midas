@@ -8,6 +8,8 @@ mod import;
 mod import_profiles;
 mod money;
 mod needs_review;
+mod ofx;
+mod ofx_accounts;
 mod overview;
 mod pay_cycle;
 mod payees;
@@ -52,6 +54,9 @@ pub fn run() {
             import::list_imports,
             import::preview_undo_import,
             import::undo_import,
+            import::preview_ofx,
+            import::stage_ofx,
+            import::commit_ofx_import,
             needs_review::list_needs_review,
             needs_review::resolve_needs_review,
             rules::list_rules,

@@ -12,6 +12,7 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0007_balance_adjustment.sql"),
     include_str!("../migrations/0008_foundation_batch_1.sql"),
     include_str!("../migrations/0009_import_engine_v2.sql"),
+    include_str!("../migrations/0010_ofx_source_adapter.sql"),
 ];
 
 /// The schema version this build knows how to read and write - always
@@ -271,7 +272,7 @@ mod tests {
             conn.execute_batch(sql).unwrap();
         }
         conn.pragma_update(None, "user_version", 7).unwrap();
-        assert_eq!(MIGRATIONS.len(), 9, "this test targets exactly the v0.1.0 -> Foundation Batch 1 boundary; update the slice above if more migrations are added before this one");
+        assert_eq!(MIGRATIONS.len(), 10, "this test targets exactly the v0.1.0 -> Foundation Batch 1 boundary; update the slice above if more migrations are added before this one");
 
         conn.execute(
             "INSERT INTO accounts (id, name, institution, account_type, include_in_net_worth, notes)
@@ -477,7 +478,7 @@ mod tests {
             conn.execute_batch(sql).unwrap();
         }
         conn.pragma_update(None, "user_version", 8).unwrap();
-        assert_eq!(MIGRATIONS.len(), 9, "this test targets exactly the Foundation Batch 1 -> Import Engine v2 boundary; update the slice above if more migrations are added before this one");
+        assert_eq!(MIGRATIONS.len(), 10, "this test targets exactly the Foundation Batch 1 -> Import Engine v2 boundary; update the slice above if more migrations are added before this one");
 
         conn.execute(
             "INSERT INTO accounts (id, name, account_type, include_in_net_worth) VALUES (1, 'Checking', 'checking', 1)",
@@ -497,7 +498,13 @@ mod tests {
         )
         .unwrap();
 
-        migrate(&conn).unwrap();
+        // Applies only migration 0009 directly (not the shared `migrate`,
+        // which would also carry this fixture through every later
+        // migration) so this test stays isolated to exactly the 0008 ->
+        // 0009 boundary it names, regardless of how many migrations exist
+        // after it.
+        conn.execute_batch(MIGRATIONS[8]).unwrap();
+        conn.pragma_update(None, "user_version", 9).unwrap();
 
         let version: i32 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
@@ -533,5 +540,69 @@ mod tests {
             )
             .unwrap();
         assert_eq!(profile_is_archived, 0);
+    }
+
+    /// The OFX/QFX source adapter (specs/phase-010) adds one new table
+    /// (`ofx_account_mappings`) and two nullable columns on `imports` -
+    /// same proof shape as the 0008/0009 tests above, scoped to the 0009
+    /// -> 0010 boundary.
+    #[test]
+    fn migration_0010_preserves_existing_data_and_defaults_new_columns_sanely() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        for sql in &MIGRATIONS[0..9] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 9).unwrap();
+        assert_eq!(MIGRATIONS.len(), 10, "this test targets exactly the Import Engine v2 -> OFX source adapter boundary; update the slice above if more migrations are added before this one");
+
+        conn.execute(
+            "INSERT INTO accounts (id, name, account_type, include_in_net_worth) VALUES (1, 'Checking', 'checking', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO imports (id, account_id, source_filename, file_hash, row_count, committed_count, duplicate_count, needs_review_count, column_mapping_json, source_type)
+             VALUES (1, 1, 'august.csv', 'deadbeef', 10, 8, 1, 1, '{}', 'csv')",
+            [],
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+
+        let version: i32 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 10);
+
+        let (filename, committed_count): (String, i64) = conn
+            .query_row(
+                "SELECT source_filename, committed_count FROM imports WHERE id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(filename, "august.csv");
+        assert_eq!(committed_count, 8);
+
+        let (balance_cents, balance_date): (Option<i64>, Option<String>) = conn
+            .query_row(
+                "SELECT statement_balance_cents, statement_balance_date FROM imports WHERE id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(balance_cents, None);
+        assert_eq!(balance_date, None);
+
+        let mapping_count: i64 = conn
+            .query_row("SELECT count(*) FROM ofx_account_mappings", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(
+            mapping_count, 0,
+            "ofx_account_mappings must exist and start empty"
+        );
     }
 }

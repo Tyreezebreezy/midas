@@ -23,7 +23,7 @@ pub enum ImportSourceType {
 }
 
 impl ImportSourceType {
-    fn as_sql_str(self) -> &'static str {
+    pub(crate) fn as_sql_str(self) -> &'static str {
         match self {
             ImportSourceType::Csv => "csv",
             ImportSourceType::Ofx => "ofx",
@@ -31,7 +31,7 @@ impl ImportSourceType {
         }
     }
 
-    fn from_sql_str(s: &str) -> rusqlite::Result<Self> {
+    pub(crate) fn from_sql_str(s: &str) -> rusqlite::Result<Self> {
         Ok(match s {
             "csv" => ImportSourceType::Csv,
             "ofx" => ImportSourceType::Ofx,
@@ -361,6 +361,8 @@ mod tests {
         conn.execute_batch(include_str!("../migrations/0008_foundation_batch_1.sql"))
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0009_import_engine_v2.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../migrations/0010_ofx_source_adapter.sql"))
             .unwrap();
         conn
     }

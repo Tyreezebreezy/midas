@@ -1904,6 +1904,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "csv",
+ "quick-xml",
  "rusqlite",
  "serde",
  "serde_json",

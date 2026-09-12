@@ -1,11 +1,13 @@
-//! Import Engine v2 (specs/phase-009): CSV source adapter -> normalized
-//! candidate -> matching/duplicate detection -> rules/payee resolution ->
-//! commit -> provenance/history. CSV is the only adapter today; a future
-//! OFX/QFX adapter would parse into the same `NormalizedCandidateTransaction`
-//! shape and reuse every function below that takes one rather than
-//! duplicating matching/commit/undo/history logic (product handoff section
-//! 5) - there is deliberately no `SourceAdapter` trait for a single
-//! implementation, per this batch's own simplification instructions.
+//! Import Engine v2 (specs/phase-009, extended by phase-010's OFX/QFX
+//! adapter): source adapter -> normalized candidate -> matching/duplicate
+//! detection -> rules/payee resolution -> commit -> provenance/history.
+//! CSV (`read_csv`/`detect_mapping`/`build_staging_rows`) and OFX/QFX
+//! (`crate::ofx` + `build_ofx_staging_rows`) both parse into the same
+//! `NormalizedCandidateTransaction` shape and share every matching/commit/
+//! undo/history function below - `commit_staged` is the one place either
+//! adapter ever writes a transaction. There is deliberately no
+//! `SourceAdapter` trait; two concrete implementations sharing one set of
+//! functions doesn't need one.
 //!
 //! Nothing here writes to the `transactions` table until `commit_import` -
 //! `stage_import` and `preview_csv` are read-only against the ledger (they
@@ -363,7 +365,12 @@ struct LedgerRow {
 }
 
 struct ExistingLedger {
-    hash_to_id: HashMap<String, i64>,
+    /// Hash -> (existing transaction id, that transaction's own external
+    /// ID if it has one). The external ID travels with the hash entry so
+    /// the matcher can tell a genuine byte-identical duplicate apart from
+    /// two different real transactions whose text happens to coincide but
+    /// whose source-provided IDs explicitly disagree (section 22).
+    hash_to_match: HashMap<String, (i64, Option<String>)>,
     external_id_to_id: HashMap<String, i64>,
     rows: Vec<LedgerRow>,
 }
@@ -375,7 +382,7 @@ fn load_existing_ledger(conn: &Connection, account_id: i64) -> Result<ExistingLe
              FROM transactions WHERE account_id = ?1",
         )
         .map_err(|e| e.to_string())?;
-    let mut hash_to_id = HashMap::new();
+    let mut hash_to_match = HashMap::new();
     let mut external_id_to_id = HashMap::new();
     let mut rows = Vec::new();
     let query_rows = stmt
@@ -402,7 +409,7 @@ fn load_existing_ledger(conn: &Connection, account_id: i64) -> Result<ExistingLe
         let (id, date, amount_cents, hash, external_id, merchant, raw_description) =
             row.map_err(|e| e.to_string())?;
         if let Some(h) = hash {
-            hash_to_id.insert(h, id);
+            hash_to_match.insert(h, (id, external_id.clone()));
         }
         if let Some(ext_id) = external_id {
             external_id_to_id.insert(ext_id, id);
@@ -416,7 +423,7 @@ fn load_existing_ledger(conn: &Connection, account_id: i64) -> Result<ExistingLe
         });
     }
     Ok(ExistingLedger {
-        hash_to_id,
+        hash_to_match,
         external_id_to_id,
         rows,
     })
@@ -462,20 +469,45 @@ fn descriptions_are_similar(a: &str, b: &str) -> bool {
 fn match_candidate(
     candidate: &NormalizedCandidateTransaction,
     ledger: &ExistingLedger,
-    batch_hashes: &HashMap<String, usize>,
+    batch_hashes: &HashMap<String, Option<String>>,
 ) -> MatchOutcome {
-    if let Some(&id) = ledger.hash_to_id.get(&candidate.source_row_hash) {
-        return MatchOutcome::ExactDuplicate {
-            existing_transaction_id: Some(id),
+    if let Some((id, existing_external_id)) = ledger.hash_to_match.get(&candidate.source_row_hash) {
+        // A source-provided external ID is stronger evidence than a text
+        // hash: when both sides have one and they explicitly disagree,
+        // this is not the same transaction, no matter how similar the text
+        // looks - falling through to the amount/date/description scan
+        // below (typically resolving as a Strong Match) rather than
+        // silently collapsing two real transactions (section 22).
+        let external_ids_conflict = match (&candidate.external_transaction_id, existing_external_id)
+        {
+            (Some(a), Some(b)) => a != b,
+            _ => false,
         };
+        if !external_ids_conflict {
+            return MatchOutcome::ExactDuplicate {
+                existing_transaction_id: Some(*id),
+            };
+        }
     }
-    if batch_hashes.contains_key(&candidate.source_row_hash) {
-        // Repeated within this same file (an export bug); neither
-        // occurrence is in the ledger yet, so there is no existing
-        // transaction id to point at.
-        return MatchOutcome::ExactDuplicate {
-            existing_transaction_id: None,
+    if let Some(earlier_external_id) = batch_hashes.get(&candidate.source_row_hash) {
+        // Same identity check as above, applied to a row seen earlier in
+        // *this* batch rather than the ledger: two rows this file itself
+        // distinguishes by external ID (e.g. two same-day, same-amount
+        // purchases with different FITIDs) must not collapse just because
+        // their text happens to coincide (section 22) - only a real repeat
+        // (identical text, no conflicting external ID) is a duplicate.
+        let external_ids_conflict = match (&candidate.external_transaction_id, earlier_external_id)
+        {
+            (Some(a), Some(b)) => a != b,
+            _ => false,
         };
+        if !external_ids_conflict {
+            // Neither occurrence is in the ledger yet, so there is no
+            // existing transaction id to point at.
+            return MatchOutcome::ExactDuplicate {
+                existing_transaction_id: None,
+            };
+        }
     }
     if let Some(external_id) = &candidate.external_transaction_id {
         if let Some(&id) = ledger.external_id_to_id.get(external_id) {
@@ -543,11 +575,13 @@ fn build_staging_rows(
         .collect();
 
     let mut rows = Vec::with_capacity(raw_rows.len());
-    // Hashes and external IDs seen earlier in *this* batch, mapped to their
-    // row_index - so a CSV that genuinely repeats a row, or claims the same
-    // external ID twice, is caught even though neither occurrence is in the
-    // ledger yet.
-    let mut batch_hashes: HashMap<String, usize> = HashMap::new();
+    // Row hashes seen earlier in *this* batch, mapped to that row's own
+    // external id (if any) - so a CSV that genuinely repeats a row is
+    // caught even though neither occurrence is in the ledger yet, while a
+    // pair the file itself distinguishes by external id is not (see
+    // `match_candidate`). `batch_external_ids` below is the separate,
+    // stricter check that two rows must never *claim* the same external id.
+    let mut batch_hashes: HashMap<String, Option<String>> = HashMap::new();
     let mut batch_external_ids: HashMap<String, usize> = HashMap::new();
     let (mut new_count, mut needs_review, mut duplicate, mut possible_match) = (0, 0, 0, 0);
 
@@ -720,7 +754,10 @@ fn build_staging_rows(
                         ),
                     };
                 if outcome == MatchOutcome::New {
-                    batch_hashes.insert(candidate.source_row_hash.clone(), row_index);
+                    batch_hashes.insert(
+                        candidate.source_row_hash.clone(),
+                        candidate.external_transaction_id.clone(),
+                    );
                 }
                 (status, Some(candidate), duplicate_id, detail)
             }
@@ -861,6 +898,44 @@ pub fn commit(
     };
     let mapping_json = serde_json::to_string(mapping).map_err(|e| e.to_string())?;
 
+    commit_staged(
+        conn,
+        account_id,
+        source_filename,
+        ImportSourceType::Csv,
+        file_hash,
+        Some(mapping_json),
+        import_profile_id,
+        None,
+        &staged,
+        force_import_row_indices,
+        excluded_row_indices,
+    )
+}
+
+/// The one place either adapter (CSV or OFX/QFX) ever writes a transaction
+/// or records an import (product handoff section 7: one shared commit
+/// path). `statement_balance` is OFX-only metadata (product handoff
+/// section 28); CSV always passes `None`.
+#[allow(clippy::too_many_arguments)]
+fn commit_staged(
+    conn: &mut Connection,
+    account_id: i64,
+    source_filename: &str,
+    source_type: ImportSourceType,
+    file_hash: String,
+    mapping_json: Option<String>,
+    import_profile_id: Option<i64>,
+    statement_balance: Option<(i64, String)>,
+    staged: &StagingResult,
+    force_import_row_indices: &HashSet<usize>,
+    excluded_row_indices: &HashSet<usize>,
+) -> Result<ImportSummary, String> {
+    let (statement_balance_cents, statement_balance_date) = match statement_balance {
+        Some((cents, date)) => (Some(cents), Some(date)),
+        None => (None, None),
+    };
+
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let mut committed = 0usize;
     let mut duplicates = 0usize;
@@ -870,15 +945,18 @@ pub fn commit(
 
     let import_id: i64 = tx
         .query_row(
-            "INSERT INTO imports (account_id, source_filename, file_hash, row_count, committed_count, duplicate_count, needs_review_count, excluded_count, column_mapping_json, source_type, import_profile_id)
-             VALUES (?1, ?2, ?3, ?4, 0, 0, 0, 0, ?5, 'csv', ?6) RETURNING id",
+            "INSERT INTO imports (account_id, source_filename, file_hash, row_count, committed_count, duplicate_count, needs_review_count, excluded_count, column_mapping_json, source_type, import_profile_id, statement_balance_cents, statement_balance_date)
+             VALUES (?1, ?2, ?3, ?4, 0, 0, 0, 0, ?5, ?6, ?7, ?8, ?9) RETURNING id",
             params![
                 account_id,
                 source_filename,
                 file_hash,
                 staged.rows.len() as i64,
                 mapping_json,
+                source_type.as_sql_str(),
                 import_profile_id,
+                statement_balance_cents,
+                statement_balance_date,
             ],
             |row| row.get(0),
         )
@@ -1024,6 +1102,515 @@ pub fn commit_import(
     )
 }
 
+// --- OFX/QFX source adapter (specs/phase-010) ---
+//
+// This section's job mirrors CSV's read_csv/detect_mapping/commit trio
+// above: parse the source-specific format into candidates, then hand off
+// to the exact same `match_candidate`/`commit_staged` shared engine. No
+// second matcher, no second commit path, no OFX-specific ledger model
+// (product handoff section 7).
+
+/// Extracts the `YYYY-MM-DD` prefix from an OFX date
+/// (`YYYYMMDD[HHMMSS[.fff]][gmt offset]`), deliberately never converting
+/// time zones - the literal calendar date the institution reported is
+/// authoritative, and any TZ math risks shifting a transaction to the
+/// wrong day (product handoff section 11).
+fn parse_ofx_date(raw: &str) -> Result<String, String> {
+    let digits: String = raw.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if digits.len() < 8 {
+        return Err(format!("'{raw}' is not a recognized OFX date."));
+    }
+    let year: i32 = digits[0..4]
+        .parse()
+        .map_err(|_| format!("'{raw}' is not a recognized OFX date."))?;
+    let month: u32 = digits[4..6]
+        .parse()
+        .map_err(|_| format!("'{raw}' is not a recognized OFX date."))?;
+    let day: u32 = digits[6..8]
+        .parse()
+        .map_err(|_| format!("'{raw}' is not a recognized OFX date."))?;
+    if !crate::dates::is_valid_calendar_date(year, month, day) {
+        return Err(format!("'{raw}' is not a valid calendar date."));
+    }
+    Ok(format!("{year:04}-{month:02}-{day:02}"))
+}
+
+/// `DTUSER` (when the institution provides it) is the date the owner
+/// actually initiated the transaction - closer to what MIDAS treats as the
+/// primary `transaction_date` than `DTPOSTED` (when the bank happened to
+/// post it). Falls back to `DTPOSTED` alone when `DTUSER` is absent, which
+/// is the common case.
+fn resolve_ofx_dates(
+    dtposted: Option<&str>,
+    dtuser: Option<&str>,
+) -> Result<(String, Option<String>), String> {
+    let posted = dtposted.map(parse_ofx_date).transpose()?;
+    let user = dtuser.map(parse_ofx_date).transpose()?;
+    match (user, posted) {
+        (Some(u), Some(p)) if u != p => Ok((u, Some(p))),
+        (Some(u), _) => Ok((u, None)),
+        (None, Some(p)) => Ok((p, None)),
+        (None, None) => Err("Missing required posted date.".to_string()),
+    }
+}
+
+/// One deterministic description policy (product handoff section 10):
+/// `NAME` leads when present; `MEMO` is appended only when it adds
+/// information `NAME` doesn't already contain, so a statement where both
+/// fields repeat the same text doesn't produce ugly duplication. Never
+/// fabricates a canonical merchant - that stays the rules/payee pipeline's
+/// job downstream, exactly as it is for CSV.
+fn merge_name_and_memo(name: Option<&str>, memo: Option<&str>) -> Option<String> {
+    let name = name.map(str::trim).filter(|s| !s.is_empty());
+    let memo = memo.map(str::trim).filter(|s| !s.is_empty());
+    match (name, memo) {
+        (Some(n), Some(m)) => {
+            let n_lower = n.to_lowercase();
+            let m_lower = m.to_lowercase();
+            let redundant =
+                n_lower == m_lower || n_lower.contains(&m_lower) || m_lower.contains(&n_lower);
+            Some(if redundant {
+                n.to_string()
+            } else {
+                format!("{n} - {m}")
+            })
+        }
+        (Some(n), None) => Some(n.to_string()),
+        (None, Some(m)) => Some(m.to_string()),
+        (None, None) => None,
+    }
+}
+
+/// Converts one statement's OFX transactions into staged rows through the
+/// identical matcher/rule/payee pipeline `build_staging_rows` uses for CSV
+/// (product handoff section 21: "do not special-case structured imports
+/// with opaque matching behavior").
+fn build_ofx_staging_rows(
+    conn: &Connection,
+    account_id: i64,
+    is_liability: bool,
+    source_type: ImportSourceType,
+    transactions: &[crate::ofx::OfxTransaction],
+    ledger: &ExistingLedger,
+    merchant_rules: &[MerchantRule],
+) -> Result<StagingResult, String> {
+    let payee_id_by_merchant_name: HashMap<String, i64> = payees::list(conn, false)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|p| (p.name.trim().to_lowercase(), p.id))
+        .collect();
+
+    let mut rows = Vec::with_capacity(transactions.len());
+    let mut batch_hashes: HashMap<String, Option<String>> = HashMap::new();
+    let mut batch_external_ids: HashMap<String, usize> = HashMap::new();
+    let (mut new_count, mut needs_review, mut duplicate, mut possible_match) = (0, 0, 0, 0);
+
+    for (row_index, txn) in transactions.iter().enumerate() {
+        let mut errors = Vec::new();
+        let mut raw: HashMap<String, String> = HashMap::new();
+        for (key, value) in [
+            ("FITID", &txn.fitid),
+            ("TRNTYPE", &txn.trntype),
+            ("DTPOSTED", &txn.dtposted),
+            ("DTUSER", &txn.dtuser),
+            ("TRNAMT", &txn.trnamt),
+            ("NAME", &txn.name),
+            ("MEMO", &txn.memo),
+            ("CHECKNUM", &txn.checknum),
+        ] {
+            if let Some(v) = value {
+                raw.insert(key.to_string(), v.clone());
+            }
+        }
+
+        let dates = resolve_ofx_dates(txn.dtposted.as_deref(), txn.dtuser.as_deref());
+        if let Err(e) = &dates {
+            errors.push(e.clone());
+        }
+
+        let description = merge_name_and_memo(txn.name.as_deref(), txn.memo.as_deref());
+        if description.is_none() {
+            errors.push("Missing required description (NAME/MEMO).".to_string());
+        }
+
+        let amount = match &txn.trnamt {
+            Some(raw_amount) => match money::parse_amount_cents(raw_amount) {
+                Ok(cents) => Some(cents),
+                Err(e) => {
+                    errors.push(e);
+                    None
+                }
+            },
+            None => {
+                errors.push("Missing required amount.".to_string());
+                None
+            }
+        };
+
+        let external_transaction_id = txn
+            .fitid
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        if let Some(ext_id) = &external_transaction_id {
+            if let Some(&first_row_index) = batch_external_ids.get(ext_id) {
+                errors.push(format!(
+                    "Transaction ID '{ext_id}' is also used by row {}; each transaction ID must be unique within this statement.",
+                    first_row_index + 1
+                ));
+            } else {
+                batch_external_ids.insert(ext_id.clone(), row_index);
+            }
+        }
+
+        let (status, candidate, duplicate_of_transaction_id, match_detail) = match (
+            dates.ok(),
+            description,
+            amount,
+        ) {
+            (Some((transaction_date, posted_date)), Some(description), Some(amount_cents))
+                if errors.is_empty() =>
+            {
+                let rule_match = rules::best_match(merchant_rules, &description);
+                let merchant = rule_match
+                    .as_ref()
+                    .and_then(|m| m.merchant.clone())
+                    .unwrap_or_else(|| description.clone());
+                let category = rule_match.as_ref().and_then(|m| m.category.clone());
+                let subcategory = rule_match.and_then(|m| m.subcategory);
+                let hash = row_hash(account_id, &transaction_date, amount_cents, &description);
+                // OFX's TRNAMT is already signed relative to the
+                // account's own balance (the same model ADR-0004
+                // already uses) - XFER is the one explicit signal worth
+                // trusting over the sign-based default; everything else
+                // reuses CSV's identical inference rather than a
+                // separate OFX accounting convention (section 12).
+                let transaction_type = if txn
+                    .trntype
+                    .as_deref()
+                    .is_some_and(|t| t.eq_ignore_ascii_case("XFER"))
+                {
+                    TransactionType::Transfer
+                } else {
+                    default_transaction_type(amount_cents, is_liability)
+                };
+                let candidate_payee_id = payee_id_by_merchant_name
+                    .get(&merchant.trim().to_lowercase())
+                    .copied();
+
+                let candidate = NormalizedCandidateTransaction {
+                    source_type,
+                    account_id,
+                    transaction_date,
+                    posted_date,
+                    amount_cents,
+                    transaction_type,
+                    raw_description: description,
+                    merchant,
+                    category,
+                    subcategory,
+                    external_transaction_id,
+                    candidate_payee_id,
+                    source_row_hash: hash,
+                };
+
+                let outcome = match_candidate(&candidate, ledger, &batch_hashes);
+                let (status, duplicate_id, detail) = match outcome {
+                        MatchOutcome::New => (RowStatus::New, None, None),
+                        MatchOutcome::ExactDuplicate {
+                            existing_transaction_id,
+                        } => (
+                            RowStatus::Duplicate,
+                            existing_transaction_id,
+                            Some("This transaction has already been imported.".to_string()),
+                        ),
+                        MatchOutcome::StrongMatch {
+                            existing_transaction_id,
+                        } => (
+                            RowStatus::PossibleMatch,
+                            Some(existing_transaction_id),
+                            Some(format!(
+                                "Likely already imported as transaction #{existing_transaction_id} (same date, amount, and description)."
+                            )),
+                        ),
+                        MatchOutcome::PossibleMatch {
+                            existing_transaction_id,
+                        } => (
+                            RowStatus::PossibleMatch,
+                            Some(existing_transaction_id),
+                            Some(format!(
+                                "Close to existing transaction #{existing_transaction_id} (same amount and a matching description, within a few days) - your decision."
+                            )),
+                        ),
+                    };
+                if outcome == MatchOutcome::New {
+                    batch_hashes.insert(
+                        candidate.source_row_hash.clone(),
+                        candidate.external_transaction_id.clone(),
+                    );
+                }
+                (status, Some(candidate), duplicate_id, detail)
+            }
+            _ => (RowStatus::NeedsReview, None, None, None),
+        };
+
+        match status {
+            RowStatus::New => new_count += 1,
+            RowStatus::NeedsReview => needs_review += 1,
+            RowStatus::Duplicate => duplicate += 1,
+            RowStatus::PossibleMatch => possible_match += 1,
+        }
+
+        rows.push(StagingRow {
+            row_index,
+            raw,
+            status,
+            errors,
+            candidate,
+            duplicate_of_transaction_id,
+            match_detail,
+        });
+    }
+
+    Ok(StagingResult {
+        rows,
+        new_count,
+        needs_review_count: needs_review,
+        duplicate_count: duplicate,
+        possible_match_count: possible_match,
+    })
+}
+
+fn mask_source_account_id(id: &str) -> String {
+    let visible: String = id
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    if visible.len() >= id.chars().count() {
+        format!("•••• {id}")
+    } else {
+        format!("•••• {visible}")
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct OfxAccountPreview {
+    pub statement_index: usize,
+    pub masked_account_id: String,
+    pub kind: String,
+    pub account_type: Option<String>,
+    pub currency: Option<String>,
+    pub existing_mapping_account_id: Option<i64>,
+    pub transaction_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OfxPreview {
+    pub accounts: Vec<OfxAccountPreview>,
+    pub source_type: ImportSourceType,
+}
+
+fn detect_ofx_source_type(filename: &str) -> ImportSourceType {
+    if filename.to_lowercase().ends_with(".qfx") {
+        ImportSourceType::Qfx
+    } else {
+        ImportSourceType::Ofx
+    }
+}
+
+/// Read-only: parses the file and reports what source accounts it
+/// contains plus any already-remembered MIDAS-account mapping for each
+/// (product handoff section 15) - never guesses, only reports facts the
+/// frontend uses to preselect or ask.
+pub fn preview_ofx_content(
+    conn: &Connection,
+    ofx_content: &str,
+    source_filename: &str,
+) -> Result<OfxPreview, String> {
+    let parsed = crate::ofx::parse(ofx_content).map_err(|e| e.to_string())?;
+    let accounts = parsed
+        .statements
+        .iter()
+        .enumerate()
+        .map(|(statement_index, stmt)| {
+            let existing_mapping_account_id =
+                crate::ofx_accounts::find_mapping(conn, &stmt.account)?;
+            Ok(OfxAccountPreview {
+                statement_index,
+                masked_account_id: mask_source_account_id(&stmt.account.source_account_id),
+                kind: match stmt.account.kind {
+                    crate::ofx::StatementKind::Bank => "bank".to_string(),
+                    crate::ofx::StatementKind::CreditCard => "credit_card".to_string(),
+                },
+                account_type: stmt.account.source_account_type.clone(),
+                currency: stmt.account.currency.clone(),
+                existing_mapping_account_id,
+                transaction_count: stmt.transactions.len(),
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(OfxPreview {
+        accounts,
+        source_type: detect_ofx_source_type(source_filename),
+    })
+}
+
+#[tauri::command]
+pub fn preview_ofx(
+    state: State<DbState>,
+    ofx_content: String,
+    source_filename: String,
+) -> Result<OfxPreview, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    preview_ofx_content(&conn, &ofx_content, &source_filename)
+}
+
+pub fn stage_ofx_content(
+    conn: &Connection,
+    account_id: i64,
+    ofx_content: &str,
+    statement_index: usize,
+    source_filename: &str,
+) -> Result<StagingResult, String> {
+    let parsed = crate::ofx::parse(ofx_content).map_err(|e| e.to_string())?;
+    let statement = parsed
+        .statements
+        .get(statement_index)
+        .ok_or_else(|| "That statement was not found in this file.".to_string())?;
+    let is_liability = accounts::account_type_of(conn, account_id)
+        .map_err(|e| e.to_string())?
+        .is_liability();
+    let ledger = load_existing_ledger(conn, account_id)?;
+    let merchant_rules = rules::relevant_rules(conn, account_id).map_err(|e| e.to_string())?;
+    build_ofx_staging_rows(
+        conn,
+        account_id,
+        is_liability,
+        detect_ofx_source_type(source_filename),
+        &statement.transactions,
+        &ledger,
+        &merchant_rules,
+    )
+}
+
+#[tauri::command]
+pub fn stage_ofx(
+    state: State<DbState>,
+    account_id: i64,
+    ofx_content: String,
+    statement_index: usize,
+    source_filename: String,
+) -> Result<StagingResult, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    stage_ofx_content(
+        &conn,
+        account_id,
+        &ofx_content,
+        statement_index,
+        &source_filename,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn commit_ofx(
+    conn: &mut Connection,
+    account_id: i64,
+    source_filename: &str,
+    ofx_content: &str,
+    statement_index: usize,
+    remember_account_mapping: bool,
+    force_import_row_indices: &HashSet<usize>,
+    excluded_row_indices: &HashSet<usize>,
+) -> Result<ImportSummary, String> {
+    let parsed = crate::ofx::parse(ofx_content).map_err(|e| e.to_string())?;
+    let statement = parsed
+        .statements
+        .get(statement_index)
+        .ok_or_else(|| "That statement was not found in this file.".to_string())?
+        .clone();
+    let source_type = detect_ofx_source_type(source_filename);
+
+    if remember_account_mapping {
+        crate::ofx_accounts::remember(conn, &statement.account, account_id)?;
+    }
+
+    let is_liability = accounts::account_type_of(conn, account_id)
+        .map_err(|e| e.to_string())?
+        .is_liability();
+    let ledger = load_existing_ledger(conn, account_id)?;
+    let merchant_rules = rules::relevant_rules(conn, account_id).map_err(|e| e.to_string())?;
+    let staged = build_ofx_staging_rows(
+        conn,
+        account_id,
+        is_liability,
+        source_type,
+        &statement.transactions,
+        &ledger,
+        &merchant_rules,
+    )?;
+
+    let file_hash = {
+        let mut hasher = Sha256::new();
+        hasher.update(ofx_content.as_bytes());
+        to_hex(&hasher.finalize())
+    };
+    let statement_balance = statement.ledger_balance.as_ref().and_then(|b| {
+        let cents = money::parse_amount_cents(&b.amount).ok()?;
+        let date = parse_ofx_date(&b.as_of_date).unwrap_or_else(|_| b.as_of_date.clone());
+        Some((cents, date))
+    });
+
+    commit_staged(
+        conn,
+        account_id,
+        source_filename,
+        source_type,
+        file_hash,
+        // `column_mapping_json` is CSV-specific metadata with a NOT NULL
+        // constraint from migration 0002; OFX has no column mapping to
+        // record, so an empty object is the honest "not applicable" value
+        // rather than a schema change for a column nothing reads back.
+        Some("{}".to_string()),
+        None,
+        statement_balance,
+        &staged,
+        force_import_row_indices,
+        excluded_row_indices,
+    )
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn commit_ofx_import(
+    state: State<DbState>,
+    account_id: i64,
+    source_filename: String,
+    ofx_content: String,
+    statement_index: usize,
+    remember_account_mapping: bool,
+    force_import_row_indices: Vec<usize>,
+    excluded_row_indices: Vec<usize>,
+) -> Result<ImportSummary, String> {
+    let mut conn = state.0.lock().map_err(|e| e.to_string())?;
+    let force_set: HashSet<usize> = force_import_row_indices.into_iter().collect();
+    let excluded_set: HashSet<usize> = excluded_row_indices.into_iter().collect();
+    commit_ofx(
+        &mut conn,
+        account_id,
+        &source_filename,
+        &ofx_content,
+        statement_index,
+        remember_account_mapping,
+        &force_set,
+        &excluded_set,
+    )
+}
+
 fn insert_review_item(
     conn: &Connection,
     issue_type: &str,
@@ -1157,12 +1744,28 @@ fn get_undone_at(conn: &Connection, import_id: i64) -> Result<Option<String>, St
 /// it. Anything else is protected and left exactly as-is (product handoff
 /// section 22).
 fn removable_transaction_ids(conn: &Connection, import_id: i64) -> Result<(Vec<i64>, i64), String> {
+    // `created_at == updated_at` alone proves nothing about tags, which
+    // attach via a separate `transaction_tags` join row without ever
+    // touching the transaction itself (found during this batch's Undo
+    // hardening review - product handoff section 26: "created_at ==
+    // updated_at does not necessarily prove that nothing meaningful was
+    // attached after import"). Split and manual transfer/refund links are
+    // checked in both directions - a transaction is protected whether it's
+    // the one pointing at another or the one being pointed at.
     let mut stmt = conn
         .prepare(
             "SELECT t.id FROM transactions t
              WHERE t.source_import_id = ?1
                AND t.created_at = t.updated_at
-               AND NOT EXISTS (SELECT 1 FROM transactions c WHERE c.split_parent_transaction_id = t.id)",
+               AND t.transfer_pair_transaction_id IS NULL
+               AND t.refund_of_transaction_id IS NULL
+               AND NOT EXISTS (SELECT 1 FROM transaction_tags tt WHERE tt.transaction_id = t.id)
+               AND NOT EXISTS (
+                    SELECT 1 FROM transactions c
+                    WHERE c.split_parent_transaction_id = t.id
+                       OR c.transfer_pair_transaction_id = t.id
+                       OR c.refund_of_transaction_id = t.id
+               )",
         )
         .map_err(|e| e.to_string())?;
     let removable: Vec<i64> = stmt
@@ -1265,6 +1868,8 @@ mod tests {
         conn.execute_batch(include_str!("../migrations/0008_foundation_batch_1.sql"))
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0009_import_engine_v2.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../migrations/0010_ofx_source_adapter.sql"))
             .unwrap();
         conn
     }
@@ -2233,6 +2838,129 @@ mod tests {
     }
 
     #[test]
+    fn undo_protects_a_tagged_transaction_even_though_tagging_never_touches_updated_at() {
+        // Found during this batch's Undo hardening audit (product handoff
+        // section 26): tags::attach() only inserts into the separate
+        // transaction_tags join table - the transaction's own updated_at
+        // never changes, so created_at == updated_at alone would wrongly
+        // call a tagged transaction "untouched."
+        let mut conn = test_conn();
+        let account_id = make_account(&conn, AccountType::Checking);
+        let summary = commit_simple(
+            &mut conn,
+            account_id,
+            "statement.csv",
+            "Date,Description,Amount\n2026-03-01,COFFEE SHOP,-4.50\n2026-03-02,PAYCHECK,2000.00\n",
+            &signed_amount_mapping(),
+        )
+        .unwrap();
+        let imported = crate::transactions::list(
+            &conn,
+            &TransactionFilter {
+                source_import_id: Some(summary.import_id),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let tagged = imported
+            .iter()
+            .find(|t| t.raw_description == "COFFEE SHOP")
+            .unwrap();
+        assert_eq!(
+            tagged.created_at, tagged.updated_at,
+            "sanity check: tagging alone must not have bumped updated_at"
+        );
+
+        let tag = crate::tags::create(&conn, "Vacation").unwrap();
+        crate::tags::attach(&conn, tagged.id, tag.id).unwrap();
+
+        let preview = preview_undo(&conn, summary.import_id).unwrap();
+        assert_eq!(preview.removable_count, 1);
+        assert_eq!(preview.protected_count, 1);
+
+        let result = undo(&mut conn, summary.import_id).unwrap();
+        assert_eq!(result.removed_count, 1);
+        assert_eq!(result.protected_count, 1);
+        assert!(
+            crate::transactions::list(
+                &conn,
+                &TransactionFilter {
+                    source_import_id: Some(summary.import_id),
+                    include_archived: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .iter()
+            .any(|t| t.id == tagged.id),
+            "a tagged transaction must survive Undo"
+        );
+    }
+
+    #[test]
+    fn undo_protects_a_transaction_referenced_as_a_transfer_pair_or_refund_target() {
+        // Same audit: no UI writes these columns yet (confirmed via a
+        // direct grep of the codebase before this batch), but the schema
+        // and the risk are real, so Undo must not assume the absence of a
+        // UI means the absence of a relationship forever.
+        let mut conn = test_conn();
+        let account_id = make_account(&conn, AccountType::Checking);
+        let summary = commit_simple(
+            &mut conn,
+            account_id,
+            "statement.csv",
+            "Date,Description,Amount\n2026-03-01,COFFEE SHOP,-4.50\n2026-03-02,PAYCHECK,2000.00\n",
+            &signed_amount_mapping(),
+        )
+        .unwrap();
+        let imported = crate::transactions::list(
+            &conn,
+            &TransactionFilter {
+                source_import_id: Some(summary.import_id),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let linked = imported
+            .iter()
+            .find(|t| t.raw_description == "COFFEE SHOP")
+            .unwrap();
+
+        // Manually establish a refund-of link the way a future feature
+        // would (no UI exists yet, matching Batch 2's existing manual-only
+        // convention for this column).
+        let manual_refund = crate::transactions::create(
+            &conn,
+            &TransactionInput {
+                account_id,
+                transaction_date: "2026-03-05".to_string(),
+                posted_date: None,
+                amount_cents: 450,
+                transaction_type: TransactionType::Refund,
+                raw_description: "Refund".to_string(),
+                merchant: None,
+                category: None,
+                subcategory: None,
+                notes: None,
+                tags: None,
+                is_pending: None,
+            },
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE transactions SET refund_of_transaction_id = ?1 WHERE id = ?2",
+            params![linked.id, manual_refund.id],
+        )
+        .unwrap();
+
+        let preview = preview_undo(&conn, summary.import_id).unwrap();
+        assert_eq!(
+            preview.protected_count, 1,
+            "the transaction referenced by another transaction's refund_of_transaction_id must be protected"
+        );
+    }
+
+    #[test]
     fn undo_refuses_to_run_twice() {
         let mut conn = test_conn();
         let account_id = make_account(&conn, AccountType::Checking);
@@ -2292,5 +3020,333 @@ mod tests {
             1,
             "a different import's data must be untouched"
         );
+    }
+
+    // --- OFX/QFX source adapter (specs/phase-010) ---
+
+    const OFX_CHECKING: &str = "OFXHEADER:100\nDATA:OFXSGML\nVERSION:102\nSECURITY:NONE\nENCODING:USASCII\nCHARSET:1252\nCOMPRESSION:NONE\nOLDFILEUID:NONE\nNEWFILEUID:NONE\n\n<OFX>\n<BANKMSGSRSV1>\n<STMTTRNRS>\n<STMTRS>\n<CURDEF>USD\n<BANKACCTFROM>\n<BANKID>111000025\n<ACCTID>0001112223\n<ACCTTYPE>CHECKING\n</BANKACCTFROM>\n<BANKTRANLIST>\n<STMTTRN>\n<TRNTYPE>DEBIT\n<DTPOSTED>20260601120000\n<TRNAMT>-4.50\n<FITID>FIT-001\n<NAME>SAMPLE COFFEE MERCHANT\n<MEMO>Purchase\n</STMTTRN>\n<STMTTRN>\n<TRNTYPE>CREDIT\n<DTPOSTED>20260602120000\n<TRNAMT>2000.00\n<FITID>FIT-002\n<NAME>SAMPLE EMPLOYER PAYROLL\n</STMTTRN>\n</BANKTRANLIST>\n<LEDGERBAL>\n<BALAMT>1995.50\n<DTASOF>20260630120000\n</LEDGERBAL>\n</STMTRS>\n</STMTTRNRS>\n</BANKMSGSRSV1>\n</OFX>\n";
+
+    fn overlapping_ofx_statement() -> String {
+        // Same FITID-001 as OFX_CHECKING (already imported), plus one
+        // genuinely new transaction (FIT-003).
+        "OFXHEADER:100\nDATA:OFXSGML\nVERSION:102\nSECURITY:NONE\nENCODING:USASCII\nCHARSET:1252\nCOMPRESSION:NONE\nOLDFILEUID:NONE\nNEWFILEUID:NONE\n\n<OFX>\n<BANKMSGSRSV1>\n<STMTTRNRS>\n<STMTRS>\n<CURDEF>USD\n<BANKACCTFROM>\n<BANKID>111000025\n<ACCTID>0001112223\n<ACCTTYPE>CHECKING\n</BANKACCTFROM>\n<BANKTRANLIST>\n<STMTTRN>\n<TRNTYPE>DEBIT\n<DTPOSTED>20260601120000\n<TRNAMT>-4.50\n<FITID>FIT-001\n<NAME>SAMPLE COFFEE MERCHANT\n<MEMO>Purchase\n</STMTTRN>\n<STMTTRN>\n<TRNTYPE>DEBIT\n<DTPOSTED>20260603120000\n<TRNAMT>-9.99\n<FITID>FIT-003\n<NAME>SAMPLE GAS STATION\n</STMTTRN>\n</BANKTRANLIST>\n</STMTRS>\n</STMTTRNRS>\n</BANKMSGSRSV1>\n</OFX>\n".to_string()
+    }
+
+    const QFX_CREDIT_CARD: &str = "OFXHEADER:100\nDATA:OFXSGML\nVERSION:102\nSECURITY:NONE\nENCODING:USASCII\nCHARSET:1252\nCOMPRESSION:NONE\nOLDFILEUID:NONE\nNEWFILEUID:NONE\n\n<OFX>\n<CREDITCARDMSGSRSV1>\n<CCSTMTTRNRS>\n<CCSTMTRS>\n<CURDEF>USD\n<CCACCTFROM>\n<ACCTID>4111111111111111\n</CCACCTFROM>\n<BANKTRANLIST>\n<STMTTRN>\n<TRNTYPE>DEBIT\n<DTPOSTED>20260605120000\n<TRNAMT>52.10\n<FITID>CC-FIT-001\n<NAME>SAMPLE GROCERY MERCHANT\n</STMTTRN>\n<STMTTRN>\n<TRNTYPE>CREDIT\n<DTPOSTED>20260610120000\n<TRNAMT>-200.00\n<FITID>CC-FIT-002\n<NAME>SAMPLE PAYMENT THANK YOU\n</STMTTRN>\n</BANKTRANLIST>\n</CCSTMTRS>\n</CCSTMTTRNRS>\n</CREDITCARDMSGSRSV1>\n</OFX>\n";
+
+    fn commit_ofx_simple(
+        conn: &mut Connection,
+        account_id: i64,
+        filename: &str,
+        ofx_content: &str,
+    ) -> Result<ImportSummary, String> {
+        commit_ofx(
+            conn,
+            account_id,
+            filename,
+            ofx_content,
+            0,
+            false,
+            &HashSet::new(),
+            &HashSet::new(),
+        )
+    }
+
+    #[test]
+    fn ofx_preview_reports_the_source_account_and_no_existing_mapping() {
+        let conn = test_conn();
+        let preview = preview_ofx_content(&conn, OFX_CHECKING, "statement.ofx").unwrap();
+        assert_eq!(preview.accounts.len(), 1);
+        assert_eq!(preview.accounts[0].kind, "bank");
+        assert_eq!(preview.accounts[0].existing_mapping_account_id, None);
+        assert_eq!(preview.accounts[0].transaction_count, 2);
+        assert!(preview.accounts[0].masked_account_id.ends_with("2223"));
+        assert!(
+            !preview.accounts[0].masked_account_id.contains("0001112223"),
+            "the full source account number must never appear in normal-UI-facing preview data"
+        );
+    }
+
+    #[test]
+    fn ofx_checking_import_creates_transactions_with_correct_sign_and_provenance() {
+        let mut conn = test_conn();
+        let account_id = make_account(&conn, AccountType::Checking);
+        let summary =
+            commit_ofx_simple(&mut conn, account_id, "statement.ofx", OFX_CHECKING).unwrap();
+        assert_eq!(summary.committed_count, 2);
+
+        let committed = crate::transactions::list(
+            &conn,
+            &TransactionFilter {
+                account_id: Some(account_id),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let purchase = committed.iter().find(|t| t.amount_cents == -450).unwrap();
+        assert_eq!(purchase.transaction_type, TransactionType::Purchase);
+        assert_eq!(purchase.external_transaction_id.as_deref(), Some("FIT-001"));
+        assert_eq!(
+            purchase.raw_description,
+            "SAMPLE COFFEE MERCHANT - Purchase"
+        );
+        assert_eq!(purchase.transaction_date, "2026-06-01");
+
+        let payroll = committed.iter().find(|t| t.amount_cents == 200000).unwrap();
+        assert_eq!(payroll.transaction_type, TransactionType::Income);
+        assert_eq!(payroll.external_transaction_id.as_deref(), Some("FIT-002"));
+
+        let (source_type, statement_balance_cents, statement_balance_date): (
+            String,
+            Option<i64>,
+            Option<String>,
+        ) = conn
+            .query_row(
+                "SELECT source_type, statement_balance_cents, statement_balance_date FROM imports WHERE id = ?1",
+                params![summary.import_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(source_type, "ofx");
+        assert_eq!(statement_balance_cents, Some(199550));
+        assert_eq!(statement_balance_date.as_deref(), Some("2026-06-30"));
+    }
+
+    #[test]
+    fn ofx_credit_card_purchase_and_payment_match_midas_sign_convention() {
+        let mut conn = test_conn();
+        let account_id = make_account(&conn, AccountType::CreditCard);
+        let summary = commit_ofx(
+            &mut conn,
+            account_id,
+            "statement.qfx",
+            QFX_CREDIT_CARD,
+            0,
+            false,
+            &HashSet::new(),
+            &HashSet::new(),
+        )
+        .unwrap();
+        assert_eq!(summary.committed_count, 2);
+
+        let committed = crate::transactions::list(
+            &conn,
+            &TransactionFilter {
+                account_id: Some(account_id),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        // ADR-0004: a card purchase increases what's owed (positive) and is
+        // spending; a payment decreases it (negative) and is a transfer,
+        // never counted as spending on either leg.
+        let purchase = committed.iter().find(|t| t.amount_cents == 5210).unwrap();
+        assert_eq!(purchase.transaction_type, TransactionType::Purchase);
+        let payment = committed.iter().find(|t| t.amount_cents == -20000).unwrap();
+        assert_eq!(payment.transaction_type, TransactionType::Transfer);
+
+        let (source_type,): (String,) = conn
+            .query_row(
+                "SELECT source_type FROM imports WHERE id = ?1",
+                params![summary.import_id],
+                |r| Ok((r.get(0)?,)),
+            )
+            .unwrap();
+        assert_eq!(source_type, "qfx");
+    }
+
+    #[test]
+    fn ofx_exact_reimport_is_idempotent_including_after_a_simulated_restart() {
+        let mut conn = test_conn();
+        let account_id = make_account(&conn, AccountType::Checking);
+        let first =
+            commit_ofx_simple(&mut conn, account_id, "statement.ofx", OFX_CHECKING).unwrap();
+        assert_eq!(first.committed_count, 2);
+
+        // "Restart" is simulated by nothing more than a fresh commit call
+        // against the same persisted connection/ledger - idempotence must
+        // hold purely from what's in the database, not in-memory state.
+        let second =
+            commit_ofx_simple(&mut conn, account_id, "statement.ofx", OFX_CHECKING).unwrap();
+        assert_eq!(second.committed_count, 0);
+        assert_eq!(second.duplicate_count, 2);
+
+        let all = crate::transactions::list(
+            &conn,
+            &TransactionFilter {
+                account_id: Some(account_id),
+                include_archived: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(all.len(), 2, "re-import must not have added new rows");
+    }
+
+    #[test]
+    fn ofx_overlapping_statement_recognizes_existing_fitids_and_commits_only_new_ones() {
+        let mut conn = test_conn();
+        let account_id = make_account(&conn, AccountType::Checking);
+        commit_ofx_simple(&mut conn, account_id, "first.ofx", OFX_CHECKING).unwrap();
+
+        let overlapping = overlapping_ofx_statement();
+        let staged = stage_ofx_content(&conn, account_id, &overlapping, 0, "second.ofx").unwrap();
+        assert_eq!(
+            staged.duplicate_count, 1,
+            "FIT-001 is already in the ledger"
+        );
+        assert_eq!(staged.new_count, 1, "FIT-003 is genuinely new");
+
+        let summary = commit_ofx_simple(&mut conn, account_id, "second.ofx", &overlapping).unwrap();
+        assert_eq!(summary.committed_count, 1);
+        assert_eq!(summary.duplicate_count, 1);
+    }
+
+    #[test]
+    fn ofx_same_amount_and_date_with_different_fitid_are_not_collapsed() {
+        // Distinct FITIDs are MIDAS's strongest signal that these are two
+        // real, separate transactions - product handoff section 22's
+        // explicit requirement, even though the amount happens to match.
+        let mut conn = test_conn();
+        let account_id = make_account(&conn, AccountType::Checking);
+        commit_ofx_simple(&mut conn, account_id, "first.ofx", OFX_CHECKING).unwrap();
+
+        let second_purchase = "OFXHEADER:100\nDATA:OFXSGML\nVERSION:102\nSECURITY:NONE\nENCODING:USASCII\nCHARSET:1252\nCOMPRESSION:NONE\nOLDFILEUID:NONE\nNEWFILEUID:NONE\n\n<OFX>\n<BANKMSGSRSV1>\n<STMTTRNRS>\n<STMTRS>\n<CURDEF>USD\n<BANKACCTFROM>\n<BANKID>111000025\n<ACCTID>0001112223\n<ACCTTYPE>CHECKING\n</BANKACCTFROM>\n<BANKTRANLIST>\n<STMTTRN>\n<TRNTYPE>DEBIT\n<DTPOSTED>20260601120000\n<TRNAMT>-4.50\n<FITID>FIT-999-DIFFERENT\n<NAME>SAMPLE COFFEE MERCHANT\n<MEMO>Purchase\n</STMTTRN>\n</BANKTRANLIST>\n</STMTRS>\n</STMTTRNRS>\n</BANKMSGSRSV1>\n</OFX>\n";
+        let staged =
+            stage_ofx_content(&conn, account_id, second_purchase, 0, "second.ofx").unwrap();
+        // Same date/amount/description as an existing transaction, but a
+        // different FITID overrides the hash match (the raw text differs
+        // too, since FITID isn't part of raw_description) - still resolved
+        // deterministically as a duplicate-of-content rather than losing
+        // data, per the shared matcher's own strong-match handling.
+        assert!(matches!(staged.rows[0].status, RowStatus::PossibleMatch));
+    }
+
+    #[test]
+    fn ofx_two_brand_new_same_batch_rows_with_different_fitids_both_stage_as_new() {
+        // Same requirement as the test above, but for two rows that are
+        // BOTH new to the ledger in the same statement (rather than one
+        // already-committed row plus a second import) - this exercises the
+        // separate batch-internal dedup path (`batch_hashes`), which must
+        // apply the identical FITID-conflict check as the ledger path
+        // rather than collapsing same-day, same-amount, same-description
+        // purchases just because the file lists them together.
+        let mut conn = test_conn();
+        let account_id = make_account(&conn, AccountType::Checking);
+        let two_coffees = "OFXHEADER:100\nDATA:OFXSGML\nVERSION:102\nSECURITY:NONE\nENCODING:USASCII\nCHARSET:1252\nCOMPRESSION:NONE\nOLDFILEUID:NONE\nNEWFILEUID:NONE\n\n<OFX>\n<BANKMSGSRSV1>\n<STMTTRNRS>\n<STMTRS>\n<CURDEF>USD\n<BANKACCTFROM>\n<BANKID>111000025\n<ACCTID>0001112223\n<ACCTTYPE>CHECKING\n</BANKACCTFROM>\n<BANKTRANLIST>\n<STMTTRN>\n<TRNTYPE>DEBIT\n<DTPOSTED>20260615090000\n<TRNAMT>-4.50\n<FITID>FIT-AAA\n<NAME>SAMPLE COFFEE MERCHANT\n<MEMO>Purchase\n</STMTTRN>\n<STMTTRN>\n<TRNTYPE>DEBIT\n<DTPOSTED>20260615090000\n<TRNAMT>-4.50\n<FITID>FIT-BBB\n<NAME>SAMPLE COFFEE MERCHANT\n<MEMO>Purchase\n</STMTTRN>\n</BANKTRANLIST>\n</STMTRS>\n</STMTTRNRS>\n</BANKMSGSRSV1>\n</OFX>\n";
+
+        let staged =
+            stage_ofx_content(&conn, account_id, two_coffees, 0, "two-coffees.ofx").unwrap();
+        assert_eq!(
+            staged.new_count, 2,
+            "two legitimate same-amount purchases distinguished only by FITID must both stage as new, not collapse into a duplicate"
+        );
+        assert!(matches!(staged.rows[0].status, RowStatus::New));
+        assert!(matches!(staged.rows[1].status, RowStatus::New));
+
+        let summary =
+            commit_ofx_simple(&mut conn, account_id, "two-coffees.ofx", two_coffees).unwrap();
+        assert_eq!(summary.committed_count, 2);
+    }
+
+    #[test]
+    fn ofx_remember_account_mapping_persists_and_is_found_on_next_preview() {
+        let mut conn = test_conn();
+        let account_id = make_account(&conn, AccountType::Checking);
+        commit_ofx(
+            &mut conn,
+            account_id,
+            "statement.ofx",
+            OFX_CHECKING,
+            0,
+            true, // remember_account_mapping
+            &HashSet::new(),
+            &HashSet::new(),
+        )
+        .unwrap();
+
+        let preview = preview_ofx_content(&conn, OFX_CHECKING, "statement.ofx").unwrap();
+        assert_eq!(
+            preview.accounts[0].existing_mapping_account_id,
+            Some(account_id)
+        );
+    }
+
+    #[test]
+    fn ofx_investment_only_file_is_rejected_before_any_commit() {
+        let mut conn = test_conn();
+        let account_id = make_account(&conn, AccountType::Checking);
+        let investment_only = "OFXHEADER:100\nDATA:OFXSGML\nVERSION:102\nSECURITY:NONE\nENCODING:USASCII\nCHARSET:1252\nCOMPRESSION:NONE\nOLDFILEUID:NONE\nNEWFILEUID:NONE\n\n<OFX>\n<INVSTMTMSGSRSV1>\n<INVSTMTTRNRS>\n<INVSTMTRS>\n<DTASOF>20260630120000\n<CURDEF>USD\n</INVSTMTRS>\n</INVSTMTTRNRS>\n</INVSTMTMSGSRSV1>\n</OFX>\n";
+
+        let err =
+            commit_ofx_simple(&mut conn, account_id, "brokerage.ofx", investment_only).unwrap_err();
+        assert!(err.contains("investment"));
+
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM transactions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0, "an unsupported file must never partially import");
+    }
+
+    #[test]
+    fn ofx_undo_removes_untouched_transactions_and_restores_the_balance() {
+        let mut conn = test_conn();
+        let account_id = make_account(&conn, AccountType::Checking);
+        let summary =
+            commit_ofx_simple(&mut conn, account_id, "statement.ofx", OFX_CHECKING).unwrap();
+
+        let result = undo(&mut conn, summary.import_id).unwrap();
+        assert_eq!(result.removed_count, 2);
+        assert_eq!(result.protected_count, 0);
+
+        let remaining: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM transactions WHERE source_import_id = ?1",
+                params![summary.import_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining, 0);
+    }
+
+    #[test]
+    fn name_and_memo_merge_avoids_duplicate_text_but_keeps_distinct_context() {
+        assert_eq!(
+            merge_name_and_memo(Some("Coffee Shop"), Some("Coffee Shop")),
+            Some("Coffee Shop".to_string()),
+            "identical NAME/MEMO must not repeat"
+        );
+        assert_eq!(
+            merge_name_and_memo(Some("Coffee Shop"), Some("Purchase")),
+            Some("Coffee Shop - Purchase".to_string()),
+            "distinct MEMO context is preserved"
+        );
+        assert_eq!(
+            merge_name_and_memo(Some("Coffee Shop"), None),
+            Some("Coffee Shop".to_string())
+        );
+        assert_eq!(
+            merge_name_and_memo(None, Some("Purchase")),
+            Some("Purchase".to_string())
+        );
+        assert_eq!(merge_name_and_memo(None, None), None);
+    }
+
+    #[test]
+    fn ofx_date_variants_all_resolve_to_the_same_calendar_date() {
+        for raw in [
+            "20260601",
+            "20260601120000",
+            "20260601120000.500",
+            "20260601120000[-5:EST]",
+            "20260601120000.500[-5:EST]",
+        ] {
+            assert_eq!(
+                parse_ofx_date(raw).unwrap(),
+                "2026-06-01",
+                "failed for {raw}"
+            );
+        }
+        assert!(parse_ofx_date("not a date").is_err());
     }
 }

@@ -364,6 +364,8 @@ mod tests {
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0009_import_engine_v2.sql"))
             .unwrap();
+        conn.execute_batch(include_str!("../migrations/0010_ofx_source_adapter.sql"))
+            .unwrap();
         conn
     }
 
