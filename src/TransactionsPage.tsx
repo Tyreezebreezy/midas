@@ -3,8 +3,8 @@ import type { Tab } from "./App";
 import type { Account, Transaction, TransactionFilter } from "./api/midas";
 import { accountsApi, transactionsApi } from "./api/midas";
 import AccountForm from "./AccountForm";
-import CsvImportWizard from "./CsvImportWizard";
 import ImportHistoryDialog from "./ImportHistoryDialog";
+import ImportWizard from "./ImportWizard";
 import TransactionForm from "./TransactionForm";
 import { SUGGESTED_CATEGORIES } from "./lib/categories";
 import { formatCents } from "./lib/currency";
@@ -91,7 +91,7 @@ function TransactionsPage({ onNavigate }: TransactionsPageProps) {
             onClick={() => setImporting(true)}
             disabled={accounts.length === 0}
           >
-            Import CSV
+            Import
           </button>
           <button
             type="button"
@@ -284,7 +284,7 @@ function TransactionsPage({ onNavigate }: TransactionsPageProps) {
       )}
 
       {importing && (
-        <CsvImportWizard
+        <ImportWizard
           accounts={accounts}
           onClose={() => setImporting(false)}
           onImported={() => {

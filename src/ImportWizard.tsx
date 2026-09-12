@@ -5,19 +5,21 @@ import type {
   CsvPreview,
   ImportProfile,
   ImportSummary,
+  OfxPreview,
   StagingResult,
 } from "./api/midas";
-import { importApi, importProfilesApi } from "./api/midas";
+import { importApi, importProfilesApi, ofxApi } from "./api/midas";
 import { formatCents } from "./lib/currency";
 import { formatDate } from "./lib/dateFormat";
 
-interface CsvImportWizardProps {
+interface ImportWizardProps {
   accounts: Account[];
   onClose: () => void;
   onImported: () => void;
   onReviewNeeded?: () => void;
 }
 
+type SourceKind = "csv" | "ofx";
 type Step = "select" | "map" | "preview" | "result";
 
 const EMPTY_MAPPING: ColumnMapping = {
@@ -48,17 +50,41 @@ function suggestProfileName(filename: string): string {
     .trim();
 }
 
-function CsvImportWizard({
+function combineSummaries(summaries: ImportSummary[]): ImportSummary {
+  return summaries.reduce(
+    (total, s) => ({
+      import_id: s.import_id,
+      committed_count: total.committed_count + s.committed_count,
+      duplicate_count: total.duplicate_count + s.duplicate_count,
+      sent_to_review_count: total.sent_to_review_count + s.sent_to_review_count,
+      invalid_count: total.invalid_count + s.invalid_count,
+      excluded_count: total.excluded_count + s.excluded_count,
+    }),
+    {
+      import_id: 0,
+      committed_count: 0,
+      duplicate_count: 0,
+      sent_to_review_count: 0,
+      invalid_count: 0,
+      excluded_count: 0,
+    },
+  );
+}
+
+function ImportWizard({
   accounts,
   onClose,
   onImported,
   onReviewNeeded,
-}: CsvImportWizardProps) {
+}: ImportWizardProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [sourceKind, setSourceKind] = useState<SourceKind>("csv");
   const [step, setStep] = useState<Step>("select");
   const [accountId, setAccountId] = useState<number>(accounts[0]?.id ?? 0);
   const [filename, setFilename] = useState("");
+
+  // CSV-specific state
   const [csvContent, setCsvContent] = useState("");
   const [csvPreview, setCsvPreview] = useState<CsvPreview | null>(null);
   const [useDebitCredit, setUseDebitCredit] = useState(false);
@@ -69,6 +95,17 @@ function CsvImportWizard({
   );
   const [saveAsProfile, setSaveAsProfile] = useState(false);
   const [newProfileName, setNewProfileName] = useState("");
+
+  // OFX/QFX-specific state
+  const [ofxContent, setOfxContent] = useState("");
+  const [ofxPreview, setOfxPreview] = useState<OfxPreview | null>(null);
+  const [statementIndex, setStatementIndex] = useState(0);
+  const [rememberMapping, setRememberMapping] = useState(true);
+  const [completedSummaries, setCompletedSummaries] = useState<ImportSummary[]>(
+    [],
+  );
+
+  // Shared preview/commit state
   const [staging, setStaging] = useState<StagingResult | null>(null);
   const [forceImport, setForceImport] = useState<Set<number>>(new Set());
   const [excludedRows, setExcludedRows] = useState<Set<number>>(new Set());
@@ -106,20 +143,33 @@ function CsvImportWizard({
     setBusy(true);
     try {
       const content = await file.text();
-      const preview = await importApi.previewCsv(content, accountId || null);
       setFilename(file.name);
-      setCsvContent(content);
-      setCsvPreview(preview);
-      setNewProfileName(suggestProfileName(file.name));
-      if (preview.profile_recognition.outcome === "clear") {
-        applyProfile(preview.profile_recognition.profile);
+
+      if (sourceKind === "csv") {
+        const preview = await importApi.previewCsv(content, accountId || null);
+        setCsvContent(content);
+        setCsvPreview(preview);
+        setNewProfileName(suggestProfileName(file.name));
+        if (preview.profile_recognition.outcome === "clear") {
+          applyProfile(preview.profile_recognition.profile);
+        } else {
+          setSelectedProfileId(null);
+          setMapping(preview.suggested_mapping);
+          setUseDebitCredit(
+            !preview.suggested_mapping.amount_column &&
+              Boolean(preview.suggested_mapping.debit_column),
+          );
+        }
       } else {
-        setSelectedProfileId(null);
-        setMapping(preview.suggested_mapping);
-        setUseDebitCredit(
-          !preview.suggested_mapping.amount_column &&
-            Boolean(preview.suggested_mapping.debit_column),
-        );
+        const preview = await ofxApi.preview(content, file.name);
+        setOfxContent(content);
+        setOfxPreview(preview);
+        setStatementIndex(0);
+        setCompletedSummaries([]);
+        const first = preview.accounts[0];
+        if (first?.existing_mapping_account_id) {
+          setAccountId(first.existing_mapping_account_id);
+        }
       }
       setStep("map");
     } catch (err) {
@@ -142,30 +192,38 @@ function CsvImportWizard({
     setError(null);
     setBusy(true);
     try {
-      const effectiveMapping: ColumnMapping = useDebitCredit
-        ? { ...mapping, amount_column: null }
-        : { ...mapping, debit_column: null, credit_column: null };
-      setMapping(effectiveMapping);
+      if (sourceKind === "csv") {
+        const effectiveMapping: ColumnMapping = useDebitCredit
+          ? { ...mapping, amount_column: null }
+          : { ...mapping, debit_column: null, credit_column: null };
+        setMapping(effectiveMapping);
 
-      let profileId = selectedProfileId;
-      if (saveAsProfile && !profileId && newProfileName.trim()) {
-        const created = await importProfilesApi.create({
-          name: newProfileName.trim(),
-          account_id: accountId,
-          source_type: "csv",
-          column_mapping: effectiveMapping,
-        });
-        profileId = created.id;
-        setSelectedProfileId(created.id);
-        setProfiles((prev) => [...prev, created]);
+        if (saveAsProfile && !selectedProfileId && newProfileName.trim()) {
+          const created = await importProfilesApi.create({
+            name: newProfileName.trim(),
+            account_id: accountId,
+            source_type: "csv",
+            column_mapping: effectiveMapping,
+          });
+          setSelectedProfileId(created.id);
+          setProfiles((prev) => [...prev, created]);
+        }
+
+        const result = await importApi.stage(
+          accountId,
+          csvContent,
+          effectiveMapping,
+        );
+        setStaging(result);
+      } else {
+        const result = await ofxApi.stage(
+          accountId,
+          ofxContent,
+          statementIndex,
+          filename,
+        );
+        setStaging(result);
       }
-
-      const result = await importApi.stage(
-        accountId,
-        csvContent,
-        effectiveMapping,
-      );
-      setStaging(result);
       setForceImport(new Set());
       setExcludedRows(new Set());
       setStep("preview");
@@ -180,22 +238,51 @@ function CsvImportWizard({
     setError(null);
     setBusy(true);
     try {
-      const result = await importApi.commit(
-        accountId,
-        filename,
-        csvContent,
-        mapping,
-        selectedProfileId,
-        Array.from(forceImport),
-        Array.from(excludedRows),
-      );
-      setSummary(result);
-      setStep("result");
+      if (sourceKind === "csv") {
+        const result = await importApi.commit(
+          accountId,
+          filename,
+          csvContent,
+          mapping,
+          selectedProfileId,
+          Array.from(forceImport),
+          Array.from(excludedRows),
+        );
+        setSummary(result);
+        setStep("result");
+      } else {
+        const result = await ofxApi.commit(
+          accountId,
+          filename,
+          ofxContent,
+          statementIndex,
+          rememberMapping,
+          Array.from(forceImport),
+          Array.from(excludedRows),
+        );
+        setCompletedSummaries((prev) => [...prev, result]);
+        setSummary(result);
+        setStep("result");
+      }
     } catch (err) {
       setError(String(err));
     } finally {
       setBusy(false);
     }
+  }
+
+  function continueToNextStatement() {
+    if (!ofxPreview) return;
+    const nextIndex = statementIndex + 1;
+    setStatementIndex(nextIndex);
+    setAccountId(
+      ofxPreview.accounts[nextIndex]?.existing_mapping_account_id ??
+        accounts[0]?.id ??
+        0,
+    );
+    setStaging(null);
+    setSummary(null);
+    setStep("map");
   }
 
   function toggleForce(rowIndex: number) {
@@ -223,6 +310,15 @@ function CsvImportWizard({
     (p) => p.account_id === null || p.account_id === accountId,
   );
   const recognition = csvPreview?.profile_recognition;
+  const currentOfxAccount = ofxPreview?.accounts[statementIndex] ?? null;
+  const moreStatementsRemain =
+    sourceKind === "ofx" &&
+    ofxPreview !== null &&
+    statementIndex + 1 < ofxPreview.accounts.length;
+  const combinedSummary =
+    sourceKind === "ofx" && completedSummaries.length > 1
+      ? combineSummaries(completedSummaries)
+      : summary;
 
   return (
     <dialog
@@ -231,7 +327,7 @@ function CsvImportWizard({
       aria-labelledby="import-title"
       onClose={onClose}
     >
-      <h2 id="import-title">Import CSV{filename ? `: ${filename}` : ""}</h2>
+      <h2 id="import-title">Import{filename ? `: ${filename}` : ""}</h2>
       <ol className="import-steps" aria-label="Import progress">
         {(["select", "map", "preview", "result"] as Step[]).map((s) => (
           <li
@@ -252,40 +348,73 @@ function CsvImportWizard({
 
       {step === "select" && (
         <div className="import-step">
-          <div className="field">
-            <label htmlFor="import-account">Import into account</label>
-            <select
-              id="import-account"
-              value={accountId}
-              onChange={(e) => setAccountId(Number(e.target.value))}
-            >
-              {accounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
+          <div className="field field-checkbox amount-direction">
+            <span className="field-legend">File type</span>
+            <label>
+              <input
+                type="radio"
+                name="source-kind"
+                checked={sourceKind === "csv"}
+                onChange={() => setSourceKind("csv")}
+              />
+              CSV - flexible bank/spreadsheet import
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="source-kind"
+                checked={sourceKind === "ofx"}
+                onChange={() => setSourceKind("ofx")}
+              />
+              OFX / QFX - structured bank statement import
+            </label>
           </div>
+          {sourceKind === "csv" && (
+            <div className="field">
+              <label htmlFor="import-account">Import into account</label>
+              <select
+                id="import-account"
+                value={accountId}
+                onChange={(e) => setAccountId(Number(e.target.value))}
+              >
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="field">
-            <label htmlFor="import-file">CSV file</label>
+            <label htmlFor="import-file">
+              {sourceKind === "csv" ? "CSV file" : "OFX/QFX file"}
+            </label>
             <input
               id="import-file"
               ref={fileInputRef}
               type="file"
-              accept=".csv,text/csv"
+              accept={sourceKind === "csv" ? ".csv,text/csv" : ".ofx,.qfx"}
               onChange={handleFileChange}
               disabled={busy}
             />
           </div>
-          <details className="csv-help">
-            <summary>Where do I get a CSV?</summary>
-            <p>
-              Most banks and credit-card providers let you download your
-              transaction history from their website. Look for "Download",
-              "Export", or "Download transactions" under your account activity
-              and choose CSV when available.
+          {sourceKind === "csv" && (
+            <details className="csv-help">
+              <summary>Where do I get a CSV?</summary>
+              <p>
+                Most banks and credit-card providers let you download your
+                transaction history from their website. Look for "Download",
+                "Export", or "Download transactions" under your account activity
+                and choose CSV when available.
+              </p>
+            </details>
+          )}
+          {sourceKind === "ofx" && (
+            <p className="muted">
+              MIDAS reads the account and transaction details directly from the
+              file - you'll just confirm which MIDAS account it belongs to next.
             </p>
-          </details>
+          )}
           <div className="dialog-actions">
             <button type="button" className="btn-secondary" onClick={onClose}>
               Cancel
@@ -294,7 +423,7 @@ function CsvImportWizard({
         </div>
       )}
 
-      {step === "map" && csvPreview && (
+      {step === "map" && sourceKind === "csv" && csvPreview && (
         <div className="import-step">
           <p className="muted">
             {csvPreview.row_count} rows detected. Confirm which columns hold
@@ -474,6 +603,90 @@ function CsvImportWizard({
         </div>
       )}
 
+      {step === "map" && sourceKind === "ofx" && currentOfxAccount && (
+        <div className="import-step">
+          {ofxPreview && ofxPreview.accounts.length > 1 && (
+            <p className="muted">
+              Statement {statementIndex + 1} of {ofxPreview.accounts.length} in
+              this file.
+            </p>
+          )}
+          <ul className="import-summary-counts">
+            <li>
+              {currentOfxAccount.kind === "bank"
+                ? "Bank account"
+                : "Credit card"}
+            </li>
+            <li>{currentOfxAccount.masked_account_id}</li>
+            {currentOfxAccount.account_type && (
+              <li>{currentOfxAccount.account_type}</li>
+            )}
+            <li>
+              {currentOfxAccount.transaction_count} transaction
+              {currentOfxAccount.transaction_count === 1 ? "" : "s"}
+            </li>
+          </ul>
+
+          {currentOfxAccount.existing_mapping_account_id && (
+            <p className="import-recognition-banner">
+              Recognized as{" "}
+              <strong>
+                {accounts.find(
+                  (a) => a.id === currentOfxAccount.existing_mapping_account_id,
+                )?.name ?? "a known account"}
+              </strong>
+              .
+            </p>
+          )}
+
+          <div className="field">
+            <label htmlFor="ofx-account-select">MIDAS account</label>
+            <select
+              id="ofx-account-select"
+              value={accountId}
+              onChange={(e) => setAccountId(Number(e.target.value))}
+            >
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="field field-checkbox">
+            <label htmlFor="ofx-remember-mapping">
+              <input
+                id="ofx-remember-mapping"
+                type="checkbox"
+                checked={rememberMapping}
+                onChange={(e) => setRememberMapping(e.target.checked)}
+              />
+              Remember this account mapping
+            </label>
+          </div>
+
+          <div className="dialog-actions">
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={onClose}
+              disabled={busy}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={handleStage}
+              disabled={busy || !accountId}
+            >
+              {busy ? "Reading…" : "Preview"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {step === "preview" && staging && (
         <div className="import-step">
           <ul className="import-summary-counts">
@@ -573,54 +786,84 @@ function CsvImportWizard({
             >
               Back
             </button>
-            <button
-              type="button"
-              className="btn-primary"
-              onClick={handleCommit}
-              disabled={busy || willImportCount === 0}
-            >
-              {busy
-                ? "Importing…"
-                : `Import ${willImportCount} transaction${willImportCount === 1 ? "" : "s"}`}
-            </button>
+            {willImportCount === 0 && moreStatementsRemain ? (
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={continueToNextStatement}
+              >
+                Next account
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={handleCommit}
+                disabled={busy || willImportCount === 0}
+              >
+                {busy
+                  ? "Importing…"
+                  : `Import ${willImportCount} transaction${willImportCount === 1 ? "" : "s"}`}
+              </button>
+            )}
           </div>
         </div>
       )}
 
-      {step === "result" && summary && (
+      {step === "result" && combinedSummary && (
         <div className="import-step">
           <p className="import-result-headline">
-            <strong>{summary.committed_count}</strong> transaction
-            {summary.committed_count === 1 ? "" : "s"} imported.
+            <strong>{combinedSummary.committed_count}</strong> transaction
+            {combinedSummary.committed_count === 1 ? "" : "s"} imported.
           </p>
           <ul className="import-summary-counts">
-            <li>{summary.duplicate_count} duplicates skipped</li>
+            <li>{combinedSummary.duplicate_count} duplicates skipped</li>
             <li>
-              {summary.sent_to_review_count} possible matches sent to Needs
-              Review
+              {combinedSummary.sent_to_review_count} possible matches sent to
+              Needs Review
             </li>
-            <li>{summary.invalid_count} rows could not be used</li>
-            {summary.excluded_count > 0 && (
-              <li>{summary.excluded_count} excluded by you</li>
+            <li>{combinedSummary.invalid_count} rows could not be used</li>
+            {combinedSummary.excluded_count > 0 && (
+              <li>{combinedSummary.excluded_count} excluded by you</li>
             )}
           </ul>
           <div className="dialog-actions">
-            {summary.sent_to_review_count + summary.invalid_count > 0 &&
-              onReviewNeeded && (
+            {moreStatementsRemain ? (
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={continueToNextStatement}
+              >
+                Import next account
+              </button>
+            ) : (
+              <>
+                {combinedSummary.sent_to_review_count +
+                  combinedSummary.invalid_count >
+                  0 &&
+                  onReviewNeeded && (
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => {
+                        onImported();
+                        onReviewNeeded();
+                      }}
+                    >
+                      Review{" "}
+                      {combinedSummary.sent_to_review_count +
+                        combinedSummary.invalid_count}
+                    </button>
+                  )}
                 <button
                   type="button"
-                  className="btn-secondary"
-                  onClick={() => {
-                    onImported();
-                    onReviewNeeded();
-                  }}
+                  className="btn-primary"
+                  onClick={onImported}
                 >
-                  Review {summary.sent_to_review_count + summary.invalid_count}
+                  Done
                 </button>
-              )}
-            <button type="button" className="btn-primary" onClick={onImported}>
-              Done
-            </button>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -686,4 +929,4 @@ function RowStatusBadge({ row }: { row: StagingResult["rows"][number] }) {
   }
 }
 
-export default CsvImportWizard;
+export default ImportWizard;

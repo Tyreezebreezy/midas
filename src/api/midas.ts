@@ -289,6 +289,57 @@ export const importHistoryApi = {
   undo: (importId: number) => invoke<UndoResult>("undo_import", { importId }),
 };
 
+// --- OFX/QFX source adapter (Import Engine v2 batch 3) ---
+export interface OfxAccountPreview {
+  statement_index: number;
+  masked_account_id: string;
+  kind: "bank" | "credit_card";
+  account_type: string | null;
+  currency: string | null;
+  existing_mapping_account_id: number | null;
+  transaction_count: number;
+}
+
+export interface OfxPreview {
+  accounts: OfxAccountPreview[];
+  source_type: ImportSourceType;
+}
+
+export const ofxApi = {
+  preview: (ofxContent: string, sourceFilename: string) =>
+    invoke<OfxPreview>("preview_ofx", { ofxContent, sourceFilename }),
+  stage: (
+    accountId: number,
+    ofxContent: string,
+    statementIndex: number,
+    sourceFilename: string,
+  ) =>
+    invoke<StagingResult>("stage_ofx", {
+      accountId,
+      ofxContent,
+      statementIndex,
+      sourceFilename,
+    }),
+  commit: (
+    accountId: number,
+    sourceFilename: string,
+    ofxContent: string,
+    statementIndex: number,
+    rememberAccountMapping: boolean,
+    forceImportRowIndices: number[],
+    excludedRowIndices: number[],
+  ) =>
+    invoke<ImportSummary>("commit_ofx_import", {
+      accountId,
+      sourceFilename,
+      ofxContent,
+      statementIndex,
+      rememberAccountMapping,
+      forceImportRowIndices,
+      excludedRowIndices,
+    }),
+};
+
 // --- Needs Review ---
 export type IssueType =
   | "malformed_row"

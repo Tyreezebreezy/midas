@@ -126,6 +126,9 @@ function ImportHistoryDialog({ onClose }: ImportHistoryDialogProps) {
                   >
                     <span className="import-history-filename">
                       {r.source_filename}
+                      <span className="badge-valid">
+                        {r.source_type.toUpperCase()}
+                      </span>
                       {r.undone_at && (
                         <span className="badge-archived">Undone</span>
                       )}
@@ -153,6 +156,7 @@ function ImportHistoryDialog({ onClose }: ImportHistoryDialogProps) {
         <div className="import-step">
           <ul className="import-summary-counts">
             <li>{selected.account_name}</li>
+            <li>{selected.source_type.toUpperCase()}</li>
             <li>{formatDate(selected.imported_at)}</li>
             {selected.import_profile_name && (
               <li>Profile: {selected.import_profile_name}</li>
