@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import type { Tab } from "./App";
 import type { Account, Transaction, TransactionFilter } from "./api/midas";
-import { accountsApi, transactionsApi } from "./api/midas";
+import { accountsApi, reconciliationApi, transactionsApi } from "./api/midas";
 import AccountForm from "./AccountForm";
 import ImportHistoryDialog from "./ImportHistoryDialog";
 import ImportWizard from "./ImportWizard";
+import ReconciledEditWarning from "./ReconciledEditWarning";
 import TransactionForm from "./TransactionForm";
 import { SUGGESTED_CATEGORIES } from "./lib/categories";
 import { formatCents } from "./lib/currency";
@@ -36,6 +37,15 @@ function TransactionsPage({ onNavigate }: TransactionsPageProps) {
   const [importing, setImporting] = useState(false);
   const [viewingHistory, setViewingHistory] = useState(false);
   const [addingAccount, setAddingAccount] = useState(false);
+  const [pendingReconciledAction, setPendingReconciledAction] = useState<{
+    transaction: Transaction;
+    actionLabel: string;
+    run: () => void;
+  } | null>(null);
+  const [showRunningBalance, setShowRunningBalance] = useState(false);
+  const [runningBalances, setRunningBalances] = useState<Map<number, number>>(
+    new Map(),
+  );
 
   async function refreshAccounts() {
     setAccounts(await accountsApi.list(false));
@@ -78,6 +88,45 @@ function TransactionsPage({ onNavigate }: TransactionsPageProps) {
     } catch (err) {
       setError(String(err));
     }
+  }
+
+  useEffect(() => {
+    if (!showRunningBalance || accountId === "") {
+      setRunningBalances(new Map());
+      return;
+    }
+    reconciliationApi
+      .getRunningBalances(accountId)
+      .then((rows) =>
+        setRunningBalances(
+          new Map(rows.map((r) => [r.transaction_id, r.running_balance_cents])),
+        ),
+      )
+      .catch((err) => setError(String(err)));
+  }, [showRunningBalance, accountId, transactions]);
+
+  function requestEdit(t: Transaction) {
+    if (t.reconciliation_id !== null) {
+      setPendingReconciledAction({
+        transaction: t,
+        actionLabel: "Changing",
+        run: () => setEditing(t),
+      });
+      return;
+    }
+    setEditing(t);
+  }
+
+  function requestArchiveToggle(t: Transaction) {
+    if (t.reconciliation_id !== null && !t.is_archived) {
+      setPendingReconciledAction({
+        transaction: t,
+        actionLabel: "Archiving",
+        run: () => toggleArchived(t),
+      });
+      return;
+    }
+    toggleArchived(t);
   }
 
   return (
@@ -176,6 +225,22 @@ function TransactionsPage({ onNavigate }: TransactionsPageProps) {
             onChange={(e) => setDateTo(e.target.value)}
           />
         </label>
+        <label
+          className="show-archived-toggle"
+          title={
+            accountId === ""
+              ? "Select one account above to show its running balance."
+              : undefined
+          }
+        >
+          <input
+            type="checkbox"
+            checked={showRunningBalance}
+            disabled={accountId === ""}
+            onChange={(e) => setShowRunningBalance(e.target.checked)}
+          />
+          Show running balance
+        </label>
       </div>
 
       {error && (
@@ -201,6 +266,11 @@ function TransactionsPage({ onNavigate }: TransactionsPageProps) {
                 <th scope="col" className="col-balance">
                   Amount
                 </th>
+                {showRunningBalance && accountId !== "" && (
+                  <th scope="col" className="col-balance">
+                    Running balance
+                  </th>
+                )}
                 <th scope="col">
                   <span className="sr-only">Status</span>
                 </th>
@@ -239,6 +309,13 @@ function TransactionsPage({ onNavigate }: TransactionsPageProps) {
                       {formatCents(t.amount_cents)}
                     </span>
                   </td>
+                  {showRunningBalance && accountId !== "" && (
+                    <td className="col-balance">
+                      {runningBalances.has(t.id)
+                        ? formatCents(runningBalances.get(t.id)!)
+                        : "—"}
+                    </td>
+                  )}
                   <td>
                     {t.needs_review && (
                       <span className="badge-review">Needs review</span>
@@ -251,14 +328,14 @@ function TransactionsPage({ onNavigate }: TransactionsPageProps) {
                     <button
                       type="button"
                       className="btn-link"
-                      onClick={() => setEditing(t)}
+                      onClick={() => requestEdit(t)}
                     >
                       Edit
                     </button>
                     <button
                       type="button"
                       className="btn-link"
-                      onClick={() => toggleArchived(t)}
+                      onClick={() => requestArchiveToggle(t)}
                     >
                       {t.is_archived ? "Unarchive" : "Archive"}
                     </button>
@@ -311,6 +388,18 @@ function TransactionsPage({ onNavigate }: TransactionsPageProps) {
           onSaved={() => {
             setAddingAccount(false);
             refreshAccounts();
+          }}
+        />
+      )}
+
+      {pendingReconciledAction && (
+        <ReconciledEditWarning
+          transaction={pendingReconciledAction.transaction}
+          actionLabel={pendingReconciledAction.actionLabel}
+          onCancel={() => setPendingReconciledAction(null)}
+          onConfirm={() => {
+            pendingReconciledAction.run();
+            setPendingReconciledAction(null);
           }}
         />
       )}

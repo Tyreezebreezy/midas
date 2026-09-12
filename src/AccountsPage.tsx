@@ -3,6 +3,8 @@ import type { Account } from "./api/midas";
 import { accountsApi } from "./api/midas";
 import AccountForm from "./AccountForm";
 import ReconcileBalanceForm from "./ReconcileBalanceForm";
+import ReconciliationHistoryDialog from "./ReconciliationHistoryDialog";
+import ReconciliationWorkspace from "./ReconciliationWorkspace";
 import { ACCOUNT_TYPE_LABELS, LIABILITY_TYPES } from "./lib/accountTypes";
 import { formatCents } from "./lib/currency";
 
@@ -13,6 +15,12 @@ function AccountsPage() {
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Account | null | "new">(null);
   const [reconciling, setReconciling] = useState<Account | null>(null);
+  const [reconcileWorkspace, setReconcileWorkspace] = useState<Account | null>(
+    null,
+  );
+  const [reconcileHistory, setReconcileHistory] = useState<Account | null>(
+    null,
+  );
 
   async function refresh() {
     setLoading(true);
@@ -140,6 +148,21 @@ function AccountsPage() {
                     <button
                       type="button"
                       className="btn-link"
+                      onClick={() => setReconcileWorkspace(account)}
+                      disabled={account.is_archived}
+                    >
+                      Reconcile
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-link"
+                      onClick={() => setReconcileHistory(account)}
+                    >
+                      Reconciliation history
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-link"
                       onClick={() => toggleArchived(account)}
                     >
                       {account.is_archived ? "Unarchive" : "Archive"}
@@ -171,6 +194,24 @@ function AccountsPage() {
             setReconciling(null);
             refresh();
           }}
+        />
+      )}
+
+      {reconcileWorkspace !== null && (
+        <ReconciliationWorkspace
+          account={reconcileWorkspace}
+          onClose={() => setReconcileWorkspace(null)}
+          onCompleted={() => {
+            setReconcileWorkspace(null);
+            refresh();
+          }}
+        />
+      )}
+
+      {reconcileHistory !== null && (
+        <ReconciliationHistoryDialog
+          account={reconcileHistory}
+          onClose={() => setReconcileHistory(null)}
         />
       )}
     </section>

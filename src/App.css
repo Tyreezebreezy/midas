@@ -694,6 +694,59 @@ footer {
   color: var(--midas-text-muted);
 }
 
+/* Account reconciliation (Phase 011) */
+
+.reconcile-period-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.reconcile-period-row .field {
+  flex: 1 1 10rem;
+  min-width: 9rem;
+}
+
+.reconcile-difference {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 1.25rem;
+  margin: 0.5rem 0 1.25rem;
+  border-radius: 0.6rem;
+  background: var(--midas-surface-raised);
+  text-align: center;
+}
+
+.reconcile-difference-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--midas-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.reconcile-difference-amount {
+  font-size: 2.25rem;
+  font-weight: 700;
+  color: var(--midas-negative);
+}
+
+.reconcile-difference-zero .reconcile-difference-amount {
+  color: var(--midas-positive);
+}
+
+.reconcile-difference-status {
+  font-size: 0.9rem;
+  color: var(--midas-text-muted);
+}
+
+.reconcile-difference-zero .reconcile-difference-status {
+  color: var(--midas-positive);
+  font-weight: 600;
+}
+
 .csv-help {
   margin: 0.25rem 0 1.25rem;
 }

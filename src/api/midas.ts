@@ -69,9 +69,13 @@ export interface Transaction {
   transfer_pair_transaction_id: number | null;
   refund_of_transaction_id: number | null;
   external_transaction_id: string | null;
+  reconciliation_status: ReconciliationStatus;
+  reconciliation_id: number | null;
   created_at: string;
   updated_at: string;
 }
+
+export type ReconciliationStatus = "unreconciled" | "cleared" | "reconciled";
 
 export interface TransactionInput {
   account_id: number;
@@ -108,6 +112,11 @@ export const transactionsApi = {
     invoke<Transaction>("update_transaction", { id, input }),
   setArchived: (id: number, archived: boolean) =>
     invoke<Transaction>("set_transaction_archived", { id, archived }),
+  setReconciliationStatus: (id: number, status: ReconciliationStatus) =>
+    invoke<Transaction>("set_transaction_reconciliation_status", {
+      id,
+      status,
+    }),
   delete: (id: number) => invoke<void>("delete_transaction", { id }),
   exportCsv: () => invoke<string>("export_transactions_csv"),
 };
@@ -659,4 +668,100 @@ export const backupApi = {
     invoke<RestoreValidation>("preview_restore_command", { contentBase64 }),
   restore: (contentBase64: string) =>
     invoke<RestoreValidation>("restore_backup_command", { contentBase64 }),
+};
+
+// --- Account reconciliation + running balances (Phase 011) ---
+export type ReconciliationRecordStatus =
+  "completed" | "needs_review" | "reopened";
+
+export interface Reconciliation {
+  id: number;
+  account_id: number;
+  statement_start_date: string;
+  statement_end_date: string;
+  statement_ending_balance_cents: number;
+  cleared_balance_cents: number;
+  status: ReconciliationRecordStatus;
+  reconciled_at: string;
+  source_import_id: number | null;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ReconciliationTransactionRow extends Transaction {
+  running_balance_cents: number;
+}
+
+export interface ReconciliationPreview {
+  account_id: number;
+  statement_start_date: string;
+  statement_end_date: string;
+  statement_ending_balance_cents: number;
+  cleared_balance_cents: number;
+  difference_cents: number;
+  rows: ReconciliationTransactionRow[];
+}
+
+export interface ReconciliationSummary {
+  last_reconciled_date: string | null;
+  last_reconciled_ending_balance_cents: number | null;
+  needs_review_count: number;
+  unreconciled_transaction_count: number;
+}
+
+export interface StatementHint {
+  source_import_id: number;
+  source_filename: string;
+  statement_start_date: string | null;
+  statement_end_date: string | null;
+  statement_ending_balance_cents: number;
+}
+
+export interface RunningBalanceRow {
+  transaction_id: number;
+  running_balance_cents: number;
+}
+
+export const reconciliationApi = {
+  preview: (
+    accountId: number,
+    statementStartDate: string,
+    statementEndDate: string,
+    statementEndingBalanceCents: number,
+  ) =>
+    invoke<ReconciliationPreview>("get_reconciliation_preview", {
+      accountId,
+      statementStartDate,
+      statementEndDate,
+      statementEndingBalanceCents,
+    }),
+  complete: (
+    accountId: number,
+    statementStartDate: string,
+    statementEndDate: string,
+    statementEndingBalanceCents: number,
+    note: string | null,
+    sourceImportId: number | null,
+  ) =>
+    invoke<Reconciliation>("complete_reconciliation", {
+      accountId,
+      statementStartDate,
+      statementEndDate,
+      statementEndingBalanceCents,
+      note,
+      sourceImportId,
+    }),
+  reopen: (id: number) =>
+    invoke<Reconciliation>("reopen_reconciliation", { id }),
+  list: (accountId: number) =>
+    invoke<Reconciliation[]>("list_reconciliations", { accountId }),
+  getSummary: (accountId: number) =>
+    invoke<ReconciliationSummary>("get_reconciliation_summary", {
+      accountId,
+    }),
+  getStatementHint: (accountId: number) =>
+    invoke<StatementHint | null>("get_latest_statement_hint", { accountId }),
+  getRunningBalances: (accountId: number) =>
+    invoke<RunningBalanceRow[]>("get_running_balances", { accountId }),
 };
