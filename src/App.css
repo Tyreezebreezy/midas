@@ -623,6 +623,13 @@ footer {
   font-weight: 500;
 }
 
+.import-recognition-banner {
+  padding: 0.6rem 0.85rem;
+  border-radius: 0.5rem;
+  background: var(--midas-surface-raised);
+  color: var(--midas-text);
+}
+
 .import-summary-counts {
   display: flex;
   flex-wrap: wrap;
@@ -643,6 +650,48 @@ footer {
 
 .import-result-headline {
   font-size: 1.1rem;
+}
+
+.import-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin: 0 0 1rem;
+  padding: 0;
+  list-style: none;
+  max-height: 22rem;
+  overflow-y: auto;
+}
+
+.import-history-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  width: 100%;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid var(--midas-border);
+  border-radius: 0.5rem;
+  background: var(--midas-surface-raised);
+  color: var(--midas-text);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.import-history-item:hover {
+  border-color: var(--midas-gold);
+}
+
+.import-history-filename {
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.import-history-counts {
+  font-size: 0.85rem;
+  color: var(--midas-text-muted);
 }
 
 .csv-help {

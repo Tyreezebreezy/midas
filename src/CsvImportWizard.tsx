@@ -3,16 +3,19 @@ import type {
   Account,
   ColumnMapping,
   CsvPreview,
+  ImportProfile,
   ImportSummary,
   StagingResult,
 } from "./api/midas";
-import { importApi } from "./api/midas";
+import { importApi, importProfilesApi } from "./api/midas";
 import { formatCents } from "./lib/currency";
+import { formatDate } from "./lib/dateFormat";
 
 interface CsvImportWizardProps {
   accounts: Account[];
   onClose: () => void;
   onImported: () => void;
+  onReviewNeeded?: () => void;
 }
 
 type Step = "select" | "map" | "preview" | "result";
@@ -25,6 +28,8 @@ const EMPTY_MAPPING: ColumnMapping = {
   debit_column: null,
   credit_column: null,
   category_column: null,
+  external_id_column: null,
+  invert_amount: false,
 };
 
 function mappingUsable(m: ColumnMapping): boolean {
@@ -36,10 +41,18 @@ function mappingUsable(m: ColumnMapping): boolean {
   );
 }
 
+function suggestProfileName(filename: string): string {
+  return filename
+    .replace(/\.csv$/i, "")
+    .replace(/[_-]+/g, " ")
+    .trim();
+}
+
 function CsvImportWizard({
   accounts,
   onClose,
   onImported,
+  onReviewNeeded,
 }: CsvImportWizardProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -50,8 +63,15 @@ function CsvImportWizard({
   const [csvPreview, setCsvPreview] = useState<CsvPreview | null>(null);
   const [useDebitCredit, setUseDebitCredit] = useState(false);
   const [mapping, setMapping] = useState<ColumnMapping>(EMPTY_MAPPING);
+  const [profiles, setProfiles] = useState<ImportProfile[]>([]);
+  const [selectedProfileId, setSelectedProfileId] = useState<number | null>(
+    null,
+  );
+  const [saveAsProfile, setSaveAsProfile] = useState(false);
+  const [newProfileName, setNewProfileName] = useState("");
   const [staging, setStaging] = useState<StagingResult | null>(null);
   const [forceImport, setForceImport] = useState<Set<number>>(new Set());
+  const [excludedRows, setExcludedRows] = useState<Set<number>>(new Set());
   const [summary, setSummary] = useState<ImportSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -60,6 +80,25 @@ function CsvImportWizard({
     dialogRef.current?.showModal();
   }, []);
 
+  useEffect(() => {
+    importProfilesApi
+      .list(false)
+      .then(setProfiles)
+      .catch(() => {
+        // Profile recognition/reuse is a convenience, not required to import.
+      });
+  }, []);
+
+  function applyProfile(profile: ImportProfile | null) {
+    setSelectedProfileId(profile?.id ?? null);
+    if (!profile) return;
+    setMapping(profile.column_mapping);
+    setUseDebitCredit(
+      !profile.column_mapping.amount_column &&
+        Boolean(profile.column_mapping.debit_column),
+    );
+  }
+
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -67,21 +106,36 @@ function CsvImportWizard({
     setBusy(true);
     try {
       const content = await file.text();
-      const preview = await importApi.previewCsv(content);
+      const preview = await importApi.previewCsv(content, accountId || null);
       setFilename(file.name);
       setCsvContent(content);
       setCsvPreview(preview);
-      setMapping(preview.suggested_mapping);
-      setUseDebitCredit(
-        !preview.suggested_mapping.amount_column &&
-          Boolean(preview.suggested_mapping.debit_column),
-      );
+      setNewProfileName(suggestProfileName(file.name));
+      if (preview.profile_recognition.outcome === "clear") {
+        applyProfile(preview.profile_recognition.profile);
+      } else {
+        setSelectedProfileId(null);
+        setMapping(preview.suggested_mapping);
+        setUseDebitCredit(
+          !preview.suggested_mapping.amount_column &&
+            Boolean(preview.suggested_mapping.debit_column),
+        );
+      }
       setStep("map");
     } catch (err) {
       setError(String(err));
     } finally {
       setBusy(false);
     }
+  }
+
+  function handleProfileSelect(value: string) {
+    if (value === "") {
+      applyProfile(null);
+      return;
+    }
+    const profile = profiles.find((p) => p.id === Number(value));
+    applyProfile(profile ?? null);
   }
 
   async function handleStage() {
@@ -92,6 +146,20 @@ function CsvImportWizard({
         ? { ...mapping, amount_column: null }
         : { ...mapping, debit_column: null, credit_column: null };
       setMapping(effectiveMapping);
+
+      let profileId = selectedProfileId;
+      if (saveAsProfile && !profileId && newProfileName.trim()) {
+        const created = await importProfilesApi.create({
+          name: newProfileName.trim(),
+          account_id: accountId,
+          source_type: "csv",
+          column_mapping: effectiveMapping,
+        });
+        profileId = created.id;
+        setSelectedProfileId(created.id);
+        setProfiles((prev) => [...prev, created]);
+      }
+
       const result = await importApi.stage(
         accountId,
         csvContent,
@@ -99,6 +167,7 @@ function CsvImportWizard({
       );
       setStaging(result);
       setForceImport(new Set());
+      setExcludedRows(new Set());
       setStep("preview");
     } catch (err) {
       setError(String(err));
@@ -116,7 +185,9 @@ function CsvImportWizard({
         filename,
         csvContent,
         mapping,
+        selectedProfileId,
         Array.from(forceImport),
+        Array.from(excludedRows),
       );
       setSummary(result);
       setStep("result");
@@ -136,8 +207,22 @@ function CsvImportWizard({
     });
   }
 
+  function toggleExcluded(rowIndex: number) {
+    setExcludedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(rowIndex)) next.delete(rowIndex);
+      else next.add(rowIndex);
+      return next;
+    });
+  }
+
   const headers = csvPreview?.headers ?? [];
-  const willImportCount = (staging?.valid_count ?? 0) + forceImport.size;
+  const willImportCount =
+    (staging?.new_count ?? 0) - excludedRows.size + forceImport.size;
+  const relevantProfiles = profiles.filter(
+    (p) => p.account_id === null || p.account_id === accountId,
+  );
+  const recognition = csvPreview?.profile_recognition;
 
   return (
     <dialog
@@ -215,6 +300,44 @@ function CsvImportWizard({
             {csvPreview.row_count} rows detected. Confirm which columns hold
             what.
           </p>
+
+          {recognition?.outcome === "clear" && (
+            <p className="import-recognition-banner">
+              Recognized as <strong>{recognition.profile.name}</strong>.{" "}
+              <button
+                type="button"
+                className="btn-link"
+                onClick={() => applyProfile(null)}
+              >
+                Map manually instead
+              </button>
+            </p>
+          )}
+          {recognition?.outcome === "ambiguous" && (
+            <p className="muted">
+              More than one saved profile could apply to this file - choose one
+              below or map the columns manually.
+            </p>
+          )}
+
+          {relevantProfiles.length > 0 && (
+            <div className="field">
+              <label htmlFor="import-profile-select">Saved mapping</label>
+              <select
+                id="import-profile-select"
+                value={selectedProfileId ?? ""}
+                onChange={(e) => handleProfileSelect(e.target.value)}
+              >
+                <option value="">Map manually</option>
+                {relevantProfiles.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <MappingRow
             label="Date"
             value={mapping.date_column}
@@ -238,6 +361,12 @@ function CsvImportWizard({
             value={mapping.category_column}
             headers={headers}
             onChange={(v) => setMapping({ ...mapping, category_column: v })}
+          />
+          <MappingRow
+            label="Transaction ID (optional)"
+            value={mapping.external_id_column}
+            headers={headers}
+            onChange={(v) => setMapping({ ...mapping, external_id_column: v })}
           />
 
           <div className="field field-checkbox">
@@ -277,6 +406,43 @@ function CsvImportWizard({
             />
           )}
 
+          <div className="field field-checkbox">
+            <label htmlFor="import-invert-amount">
+              <input
+                id="import-invert-amount"
+                type="checkbox"
+                checked={mapping.invert_amount}
+                onChange={(e) =>
+                  setMapping({ ...mapping, invert_amount: e.target.checked })
+                }
+              />
+              This file's amounts are reversed (flip the sign)
+            </label>
+          </div>
+
+          {selectedProfileId === null && (
+            <div className="field field-checkbox">
+              <label htmlFor="import-save-profile">
+                <input
+                  id="import-save-profile"
+                  type="checkbox"
+                  checked={saveAsProfile}
+                  onChange={(e) => setSaveAsProfile(e.target.checked)}
+                />
+                Save this mapping as an import profile
+              </label>
+              {saveAsProfile && (
+                <input
+                  type="text"
+                  aria-label="Profile name"
+                  placeholder="e.g. Navy Federal Checking"
+                  value={newProfileName}
+                  onChange={(e) => setNewProfileName(e.target.value)}
+                />
+              )}
+            </div>
+          )}
+
           <div className="dialog-actions">
             <button
               type="button"
@@ -296,7 +462,10 @@ function CsvImportWizard({
                   useDebitCredit
                     ? { ...mapping, amount_column: null }
                     : { ...mapping, debit_column: null, credit_column: null },
-                )
+                ) ||
+                (saveAsProfile &&
+                  selectedProfileId === null &&
+                  !newProfileName.trim())
               }
             >
               {busy ? "Reading…" : "Preview"}
@@ -309,19 +478,19 @@ function CsvImportWizard({
         <div className="import-step">
           <ul className="import-summary-counts">
             <li>
-              <strong>{staging.valid_count}</strong> ready to import
+              <strong>{staging.new_count}</strong> new
             </li>
             <li>
-              <strong>{staging.exact_duplicate_count}</strong> exact duplicates
-              (skipped automatically)
+              <strong>{staging.duplicate_count}</strong> duplicates (skipped
+              automatically)
             </li>
             <li>
-              <strong>{staging.probable_duplicate_count}</strong> possible
-              duplicates (your decision)
+              <strong>{staging.possible_match_count}</strong> possible matches
+              (your decision)
             </li>
             <li>
-              <strong>{staging.invalid_count}</strong> could not be parsed (sent
-              to Needs Review)
+              <strong>{staging.needs_review_count}</strong> could not be used
+              (sent to Needs Review)
             </li>
           </ul>
           <p className="muted">
@@ -341,7 +510,7 @@ function CsvImportWizard({
                   </th>
                   <th scope="col">Status</th>
                   <th scope="col">
-                    <span className="sr-only">Import anyway</span>
+                    <span className="sr-only">Include</span>
                   </th>
                 </tr>
               </thead>
@@ -349,22 +518,36 @@ function CsvImportWizard({
                 {staging.rows.map((row) => (
                   <tr key={row.row_index}>
                     <td>{row.row_index + 1}</td>
-                    <td>{row.proposed?.transaction_date ?? "—"}</td>
                     <td>
-                      {row.proposed?.raw_description ??
+                      {row.candidate
+                        ? formatDate(row.candidate.transaction_date)
+                        : "—"}
+                    </td>
+                    <td>
+                      {row.candidate?.raw_description ??
                         Object.values(row.raw)[0] ??
                         "—"}
                     </td>
                     <td className="col-balance">
-                      {row.proposed
-                        ? formatCents(row.proposed.amount_cents)
+                      {row.candidate
+                        ? formatCents(row.candidate.amount_cents)
                         : "—"}
                     </td>
                     <td>
                       <RowStatusBadge row={row} />
                     </td>
                     <td>
-                      {row.status === "probable_duplicate" && (
+                      {row.status === "new" && (
+                        <label className="force-import-toggle">
+                          <input
+                            type="checkbox"
+                            checked={!excludedRows.has(row.row_index)}
+                            onChange={() => toggleExcluded(row.row_index)}
+                          />
+                          Include
+                        </label>
+                      )}
+                      {row.status === "possible_match" && (
                         <label className="force-import-toggle">
                           <input
                             type="checkbox"
@@ -411,11 +594,30 @@ function CsvImportWizard({
             {summary.committed_count === 1 ? "" : "s"} imported.
           </p>
           <ul className="import-summary-counts">
-            <li>{summary.exact_duplicate_count} exact duplicates skipped</li>
-            <li>{summary.sent_to_review_count} sent to Needs Review</li>
-            <li>{summary.invalid_count} malformed rows sent to Needs Review</li>
+            <li>{summary.duplicate_count} duplicates skipped</li>
+            <li>
+              {summary.sent_to_review_count} possible matches sent to Needs
+              Review
+            </li>
+            <li>{summary.invalid_count} rows could not be used</li>
+            {summary.excluded_count > 0 && (
+              <li>{summary.excluded_count} excluded by you</li>
+            )}
           </ul>
           <div className="dialog-actions">
+            {summary.sent_to_review_count + summary.invalid_count > 0 &&
+              onReviewNeeded && (
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => {
+                    onImported();
+                    onReviewNeeded();
+                  }}
+                >
+                  Review {summary.sent_to_review_count + summary.invalid_count}
+                </button>
+              )}
             <button type="button" className="btn-primary" onClick={onImported}>
               Done
             </button>
@@ -459,18 +661,26 @@ function MappingRow({
 
 function RowStatusBadge({ row }: { row: StagingResult["rows"][number] }) {
   switch (row.status) {
-    case "valid":
-      return <span className="badge-valid">Ready</span>;
-    case "invalid":
+    case "new":
+      return <span className="badge-valid">New</span>;
+    case "needs_review":
       return (
         <span className="badge-review" title={row.errors.join("; ")}>
-          Invalid
+          Needs review
         </span>
       );
-    case "exact_duplicate":
-      return <span className="badge-archived">Already imported</span>;
-    case "probable_duplicate":
-      return <span className="badge-review">Possible duplicate</span>;
+    case "duplicate":
+      return (
+        <span className="badge-archived" title={row.match_detail ?? undefined}>
+          Duplicate
+        </span>
+      );
+    case "possible_match":
+      return (
+        <span className="badge-review" title={row.match_detail ?? undefined}>
+          Possible match
+        </span>
+      );
   }
 }
 

@@ -158,7 +158,7 @@ function App() {
           {tab === "overview" && (
             <OverviewPage onNavigate={setTab} displayName={displayName} />
           )}
-          {tab === "transactions" && <TransactionsPage />}
+          {tab === "transactions" && <TransactionsPage onNavigate={setTab} />}
           {tab === "accounts" && <AccountsPage />}
           {tab === "budgets" && <BudgetsPage />}
           {tab === "bills" && <RecurringPage />}

@@ -68,6 +68,7 @@ export interface Transaction {
   source_row_hash: string | null;
   transfer_pair_transaction_id: number | null;
   refund_of_transaction_id: number | null;
+  external_transaction_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -95,6 +96,7 @@ export interface TransactionFilter {
   date_to?: string | null;
   include_archived?: boolean;
   needs_review_only?: boolean;
+  source_import_id?: number | null;
 }
 
 export const transactionsApi = {
@@ -110,7 +112,7 @@ export const transactionsApi = {
   exportCsv: () => invoke<string>("export_transactions_csv"),
 };
 
-// --- CSV import ---
+// --- Import Engine v2: CSV source adapter, matching, profiles, history ---
 export interface ColumnMapping {
   date_column: string | null;
   posted_date_column: string | null;
@@ -119,7 +121,49 @@ export interface ColumnMapping {
   debit_column: string | null;
   credit_column: string | null;
   category_column: string | null;
+  external_id_column: string | null;
+  invert_amount: boolean;
 }
+
+export type ImportSourceType = "csv" | "ofx" | "qfx";
+
+export interface ImportProfile {
+  id: number;
+  name: string;
+  account_id: number | null;
+  source_type: ImportSourceType;
+  column_mapping: ColumnMapping;
+  is_archived: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ImportProfileInput {
+  name: string;
+  account_id: number | null;
+  source_type: ImportSourceType;
+  column_mapping: ColumnMapping;
+}
+
+export const importProfilesApi = {
+  list: (includeArchived: boolean) =>
+    invoke<ImportProfile[]>("list_import_profiles", { includeArchived }),
+  create: (input: ImportProfileInput) =>
+    invoke<ImportProfile>("create_import_profile", { input }),
+  update: (id: number, input: ImportProfileInput) =>
+    invoke<ImportProfile>("update_import_profile", { id, input }),
+  delete: (id: number) => invoke<void>("delete_import_profile", { id }),
+  setArchived: (id: number, archived: boolean) =>
+    invoke<ImportProfile>("set_import_profile_archived", { id, archived }),
+};
+
+// Conservative profile recognition (product handoff section 8) - never a
+// silent reinterpretation, only ever "clear" when exactly one saved profile
+// fits this file's actual headers.
+export type ProfileRecognition =
+  | { outcome: "clear"; profile: ImportProfile }
+  | { outcome: "ambiguous"; profiles: ImportProfile[] }
+  | { outcome: "none" };
 
 export interface CsvPreview {
   headers: string[];
@@ -127,12 +171,19 @@ export interface CsvPreview {
   sample_rows: Record<string, string>[];
   suggested_mapping: ColumnMapping;
   mapping_confident: boolean;
+  profile_recognition: ProfileRecognition;
 }
 
-export type RowStatus =
-  "valid" | "invalid" | "exact_duplicate" | "probable_duplicate";
+// The 4 simple, user-facing statuses (product handoff section 10). Duplicate
+// covers both a byte-identical row and a high-confidence "strong match" -
+// only a byte-identical/external-ID match is ever auto-skipped without
+// asking; a strong match still goes through possible_match's review/force
+// mechanism (see match_detail for which kind it actually was).
+export type RowStatus = "new" | "duplicate" | "possible_match" | "needs_review";
 
-export interface ProposedTransaction {
+export interface NormalizedCandidateTransaction {
+  source_type: ImportSourceType;
+  account_id: number;
   transaction_date: string;
   posted_date: string | null;
   amount_cents: number;
@@ -140,6 +191,9 @@ export interface ProposedTransaction {
   raw_description: string;
   merchant: string;
   category: string | null;
+  subcategory: string | null;
+  external_transaction_id: string | null;
+  candidate_payee_id: number | null;
   source_row_hash: string;
 }
 
@@ -148,29 +202,31 @@ export interface StagingRow {
   raw: Record<string, string>;
   status: RowStatus;
   errors: string[];
-  proposed: ProposedTransaction | null;
+  candidate: NormalizedCandidateTransaction | null;
   duplicate_of_transaction_id: number | null;
+  match_detail: string | null;
 }
 
 export interface StagingResult {
   rows: StagingRow[];
-  valid_count: number;
-  invalid_count: number;
-  exact_duplicate_count: number;
-  probable_duplicate_count: number;
+  new_count: number;
+  needs_review_count: number;
+  duplicate_count: number;
+  possible_match_count: number;
 }
 
 export interface ImportSummary {
   import_id: number;
   committed_count: number;
-  exact_duplicate_count: number;
+  duplicate_count: number;
   sent_to_review_count: number;
   invalid_count: number;
+  excluded_count: number;
 }
 
 export const importApi = {
-  previewCsv: (csvContent: string) =>
-    invoke<CsvPreview>("preview_csv", { csvContent }),
+  previewCsv: (csvContent: string, accountId: number | null) =>
+    invoke<CsvPreview>("preview_csv", { csvContent, accountId }),
   stage: (accountId: number, csvContent: string, mapping: ColumnMapping) =>
     invoke<StagingResult>("stage_import", { accountId, csvContent, mapping }),
   commit: (
@@ -178,15 +234,59 @@ export const importApi = {
     sourceFilename: string,
     csvContent: string,
     mapping: ColumnMapping,
+    importProfileId: number | null,
     forceImportRowIndices: number[],
+    excludedRowIndices: number[],
   ) =>
     invoke<ImportSummary>("commit_import", {
       accountId,
       sourceFilename,
       csvContent,
       mapping,
+      importProfileId,
       forceImportRowIndices,
+      excludedRowIndices,
     }),
+};
+
+// --- Import History / Undo ---
+export interface ImportRecord {
+  id: number;
+  account_id: number;
+  account_name: string;
+  source_type: string;
+  source_filename: string;
+  import_profile_id: number | null;
+  import_profile_name: string | null;
+  imported_at: string;
+  row_count: number;
+  committed_count: number;
+  duplicate_count: number;
+  needs_review_count: number;
+  excluded_count: number;
+  undone_at: string | null;
+  undone_removed_count: number | null;
+  remaining_transaction_count: number;
+}
+
+export interface UndoPreview {
+  import_id: number;
+  total_transaction_count: number;
+  removable_count: number;
+  protected_count: number;
+}
+
+export interface UndoResult {
+  import_id: number;
+  removed_count: number;
+  protected_count: number;
+}
+
+export const importHistoryApi = {
+  list: () => invoke<ImportRecord[]>("list_imports"),
+  previewUndo: (importId: number) =>
+    invoke<UndoPreview>("preview_undo_import", { importId }),
+  undo: (importId: number) => invoke<UndoResult>("undo_import", { importId }),
 };
 
 // --- Needs Review ---

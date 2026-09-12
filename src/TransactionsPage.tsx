@@ -1,15 +1,21 @@
 import { useEffect, useState } from "react";
+import type { Tab } from "./App";
 import type { Account, Transaction, TransactionFilter } from "./api/midas";
 import { accountsApi, transactionsApi } from "./api/midas";
 import AccountForm from "./AccountForm";
 import CsvImportWizard from "./CsvImportWizard";
+import ImportHistoryDialog from "./ImportHistoryDialog";
 import TransactionForm from "./TransactionForm";
 import { SUGGESTED_CATEGORIES } from "./lib/categories";
 import { formatCents } from "./lib/currency";
 import { formatDate } from "./lib/dateFormat";
 import { TRANSACTION_TYPE_LABELS } from "./lib/transactionTypes";
 
-function TransactionsPage() {
+interface TransactionsPageProps {
+  onNavigate: (tab: Tab) => void;
+}
+
+function TransactionsPage({ onNavigate }: TransactionsPageProps) {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
@@ -28,6 +34,7 @@ function TransactionsPage() {
   const [dateTo, setDateTo] = useState("");
   const [editing, setEditing] = useState<Transaction | null | "new">(null);
   const [importing, setImporting] = useState(false);
+  const [viewingHistory, setViewingHistory] = useState(false);
   const [addingAccount, setAddingAccount] = useState(false);
 
   async function refreshAccounts() {
@@ -85,6 +92,13 @@ function TransactionsPage() {
             disabled={accounts.length === 0}
           >
             Import CSV
+          </button>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => setViewingHistory(true)}
+          >
+            Import History
           </button>
           <button
             type="button"
@@ -275,6 +289,16 @@ function TransactionsPage() {
           onClose={() => setImporting(false)}
           onImported={() => {
             setImporting(false);
+            refresh();
+          }}
+          onReviewNeeded={() => onNavigate("review")}
+        />
+      )}
+
+      {viewingHistory && (
+        <ImportHistoryDialog
+          onClose={() => {
+            setViewingHistory(false);
             refresh();
           }}
         />
