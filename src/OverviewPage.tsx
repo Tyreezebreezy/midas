@@ -255,6 +255,62 @@ function OverviewPage({
             </ul>
           )}
         </div>
+
+        <div className="overview-card">
+          <h2>Monthly budget</h2>
+          {overview.budget_health.length === 0 ? (
+            <p className="overview-card-empty">
+              <button
+                type="button"
+                className="btn-link"
+                onClick={() => onNavigate("budgets")}
+              >
+                Set up a budget →
+              </button>
+            </p>
+          ) : (
+            <>
+              <p className="muted">
+                Spent{" "}
+                {formatCents(
+                  overview.budget_health.reduce(
+                    (sum, b) => sum + b.actual_amount_cents,
+                    0,
+                  ),
+                )}{" "}
+                /{" "}
+                {formatCents(
+                  overview.budget_health.reduce(
+                    (sum, b) => sum + b.effective_amount_cents,
+                    0,
+                  ),
+                )}
+              </p>
+              {(() => {
+                const needingAttention = overview.budget_health.filter(
+                  (b) => b.status === "over" || b.pace?.status === "faster",
+                ).length;
+                return needingAttention > 0 ? (
+                  <p className="muted">
+                    {needingAttention} categor
+                    {needingAttention === 1 ? "y needs" : "ies need"} attention
+                  </p>
+                ) : (
+                  <p className="muted">All categories on track.</p>
+                );
+              })()}
+              <p className="hero-summary-line">
+                <button
+                  type="button"
+                  className="btn-link"
+                  onClick={() => onNavigate("budgets")}
+                >
+                  View budget →
+                </button>
+              </p>
+            </>
+          )}
+        </div>
       </div>
 
       <h2 className="section-heading">Cash position and net worth</h2>
@@ -276,58 +332,6 @@ function OverviewPage({
           <dd>{formatCents(overview.net_worth.net_worth_cents)}</dd>
         </div>
       </dl>
-
-      <h2 className="section-heading">Budget health</h2>
-      {overview.budget_health.length === 0 ? (
-        <p className="muted">
-          <button
-            type="button"
-            className="btn-link"
-            onClick={() => onNavigate("budgets")}
-          >
-            Set up a budget →
-          </button>
-        </p>
-      ) : (
-        <div className="table-scroll">
-          <table className="accounts-table">
-            <thead>
-              <tr>
-                <th scope="col">Category</th>
-                <th scope="col" className="col-balance">
-                  Planned
-                </th>
-                <th scope="col" className="col-balance">
-                  Actual
-                </th>
-                <th scope="col">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {overview.budget_health.map((b) => (
-                <tr key={b.id}>
-                  <td>{b.category}</td>
-                  <td className="col-balance">
-                    {formatCents(b.planned_amount_cents)}
-                  </td>
-                  <td className="col-balance">
-                    {formatCents(b.actual_amount_cents)}
-                  </td>
-                  <td>
-                    {b.status === "over" ? (
-                      <span className="badge-review">Over</span>
-                    ) : b.status === "near" ? (
-                      <span className="badge-review">Near</span>
-                    ) : (
-                      <span className="badge-valid">Under</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
 
       <h2 className="section-heading">Recent transactions</h2>
       {overview.recent_transactions.length === 0 ? (

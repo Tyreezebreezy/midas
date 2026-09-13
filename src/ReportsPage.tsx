@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import type { CategoryTotal, MonthlyFlow, Transaction } from "./api/midas";
-import { reportsApi, transactionsApi } from "./api/midas";
+import type { CategoryTotal, MonthlyFlow } from "./api/midas";
+import { reportsApi } from "./api/midas";
+import CategoryDrilldown from "./CategoryDrilldown";
 import { formatCents } from "./lib/currency";
-import { formatDate } from "./lib/dateFormat";
 import { currentMonthValue, monthRange, shiftMonth } from "./lib/monthValue";
 
 const monthFormatter = new Intl.DateTimeFormat("en-US", {
@@ -124,68 +124,6 @@ function CategoryDonut({
         </text>
       </g>
     </svg>
-  );
-}
-
-function CategoryDrilldown({
-  category,
-  from,
-  to,
-}: {
-  category: string;
-  from: string;
-  to: string;
-}) {
-  const [transactions, setTransactions] = useState<Transaction[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setTransactions(null);
-    setError(null);
-    transactionsApi
-      .list({
-        category: category === "Uncategorized" ? null : category,
-        date_from: from,
-        date_to: to,
-      })
-      .then(setTransactions)
-      .catch((err) => setError(String(err)));
-  }, [category, from, to]);
-
-  if (error) {
-    return (
-      <p className="form-error" role="alert">
-        {error}
-      </p>
-    );
-  }
-  if (!transactions) return <p className="muted">Loading…</p>;
-  if (transactions.length === 0) {
-    return <p className="muted">No transactions found.</p>;
-  }
-
-  return (
-    <div className="table-scroll">
-      <table className="accounts-table">
-        <tbody>
-          {transactions.map((t) => (
-            <tr key={t.id}>
-              <td>{formatDate(t.transaction_date)}</td>
-              <td>{t.merchant}</td>
-              <td className="col-balance">
-                <span
-                  className={
-                    t.amount_cents < 0 ? "amount-owed" : "amount-positive"
-                  }
-                >
-                  {formatCents(t.amount_cents)}
-                </span>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
   );
 }
 

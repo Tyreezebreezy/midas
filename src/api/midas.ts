@@ -598,9 +598,16 @@ export const accountingApi = {
     invoke<number>("get_total_spending", { filter }),
 };
 
-// --- Budgets (Phase 4B) ---
-export type BudgetClassification = "fixed" | "flexible";
+// --- Budgets (Phase 4B, matured into Budget Intelligence in Batch 7) ---
+export type BudgetClassification = "fixed" | "flexible" | "discretionary";
 export type BudgetStatus = "under" | "near" | "over";
+export type PaceStatus = "on_track" | "faster" | "slower";
+
+export interface PaceInfo {
+  percent_used: number;
+  percent_elapsed: number;
+  status: PaceStatus;
+}
 
 export interface Budget {
   id: number;
@@ -608,10 +615,17 @@ export interface Budget {
   month: string;
   planned_amount_cents: number;
   classification: BudgetClassification;
+  rollover_enabled: boolean;
   created_at: string;
   updated_at: string;
   actual_amount_cents: number;
   status: BudgetStatus;
+  // --- Batch 7: computed live, never stored ---
+  rollover_in_cents: number;
+  effective_amount_cents: number;
+  typical_amount_cents: number | null;
+  typical_months_of_history: number;
+  pace: PaceInfo | null;
 }
 
 export interface BudgetInput {
@@ -619,11 +633,12 @@ export interface BudgetInput {
   month: string;
   planned_amount_cents: number;
   classification: BudgetClassification;
+  rollover_enabled: boolean;
 }
 
 export interface BudgetSuggestion {
   category: string;
-  average_actual_cents: number;
+  typical_amount_cents: number;
   suggested_cents: number;
   months_of_history: number;
   existing_planned_cents: number | null;
@@ -640,6 +655,10 @@ export const budgetsApi = {
       targetMonth,
       lookbackMonths,
     }),
+  copyFromMonth: (fromMonth: string, toMonth: string) =>
+    invoke<number>("copy_budgets_from_month", { fromMonth, toMonth }),
+  unbudgetedSpending: (month: string) =>
+    invoke<CategoryTotal[]>("get_unbudgeted_spending", { month }),
 };
 
 // --- Savings Goals (Phase 4B) ---

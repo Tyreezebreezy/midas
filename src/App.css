@@ -978,6 +978,58 @@ footer {
   text-align: right;
 }
 
+.budget-summary-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem 2.5rem;
+  margin: 0 0 1.5rem;
+  padding: 1.1rem 1.4rem;
+  border: 1px solid var(--midas-border);
+  border-radius: 0.85rem;
+  background: var(--midas-surface-raised);
+}
+
+.budget-copy-prompt {
+  margin: -0.5rem 0 1.25rem;
+}
+
+.budget-progress {
+  margin: 0.6rem 0 0.3rem;
+}
+
+.budget-progress-track {
+  position: relative;
+  background: var(--midas-border);
+  border-radius: 4px;
+  height: 8px;
+  margin: 0;
+  overflow: visible;
+}
+
+.budget-progress-fill {
+  background: var(--midas-gold);
+  height: 100%;
+  border-radius: 4px;
+}
+
+.budget-progress-fill-over {
+  background: var(--midas-negative);
+}
+
+.budget-progress-marker {
+  position: absolute;
+  top: -3px;
+  width: 2px;
+  height: 14px;
+  background: var(--midas-text);
+  opacity: 0.6;
+  transform: translateX(-1px);
+}
+
+.budget-status-line {
+  margin: 0.3rem 0;
+}
+
 /* Settings page */
 
 .settings-sections {
