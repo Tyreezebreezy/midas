@@ -289,8 +289,10 @@ pub fn upcoming_in_range(
     let sql = format!(
         "SELECT {OCCURRENCE_COLUMNS} FROM recurring_occurrences o
          JOIN recurring_series s ON s.id = o.series_id
+         JOIN accounts a ON a.id = s.account_id
          WHERE o.expected_date >= ?1 AND o.expected_date <= ?2
            AND s.status = 'confirmed'
+           AND a.is_archived = 0
            {}
          ORDER BY o.expected_date ASC, s.merchant ASC",
         if account_id.is_some() {
@@ -1295,5 +1297,29 @@ mod tests {
 
         let all = upcoming_in_range(&conn, &range_start, &range_end, None).unwrap();
         assert!(all.iter().any(|o| o.merchant == "Other Account Bill"));
+    }
+
+    /// Batch 10 reconnaissance found this leaking live: an already-archived
+    /// test account's still-`confirmed` series kept surfacing in the
+    /// Recurring page's "All accounts" Upcoming view forever, since this
+    /// function never filtered by `accounts.is_archived`. Forecast/Signals/
+    /// Review were never affected (they always pass an explicit,
+    /// already-filtered account id list), but this shared function's own
+    /// `account_id: None` "everything" path was not.
+    #[test]
+    fn upcoming_in_range_excludes_confirmed_series_on_an_archived_account() {
+        let mut conn = test_conn();
+        let account_id = make_account(&conn);
+        let base = anchor(&conn);
+        make_confirmed_monthly(&mut conn, account_id, &base);
+        accounts::set_archived(&conn, account_id, true).unwrap();
+
+        let range_start = add_days(&base, -5);
+        let range_end = add_days(&base, 25);
+        let all = upcoming_in_range(&conn, &range_start, &range_end, None).unwrap();
+        assert!(all.iter().all(|o| o.account_id != account_id));
+
+        let scoped = upcoming_in_range(&conn, &range_start, &range_end, Some(account_id)).unwrap();
+        assert!(scoped.is_empty());
     }
 }
