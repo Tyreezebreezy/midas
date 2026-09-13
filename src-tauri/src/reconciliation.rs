@@ -760,6 +760,10 @@ mod tests {
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0011_reconciliation.sql"))
             .unwrap();
+        conn.execute_batch(include_str!(
+            "../migrations/0012_transaction_intelligence.sql"
+        ))
+        .unwrap();
         conn
     }
 
@@ -800,6 +804,8 @@ mod tests {
                 notes: None,
                 tags: None,
                 is_pending: None,
+                payee_id: None,
+                is_one_time: false,
             },
         )
         .unwrap()
@@ -1008,6 +1014,8 @@ mod tests {
                 notes: None,
                 tags: None,
                 is_pending: Some(true),
+                payee_id: None,
+                is_one_time: false,
             },
         )
         .unwrap()
@@ -1378,6 +1386,8 @@ mod tests {
             notes: None,
             tags: None,
             is_pending: None,
+            payee_id: None,
+            is_one_time: false,
         };
         transactions::update(&conn, t, &edit).unwrap();
         let after = get(&conn, reconciliation.id).unwrap().unwrap();
@@ -1428,6 +1438,8 @@ mod tests {
                 notes: Some("A note".to_string()),
                 tags: None,
                 is_pending: None,
+                payee_id: None,
+                is_one_time: false,
             },
         )
         .unwrap();
@@ -1479,6 +1491,8 @@ mod tests {
                 notes: None,
                 tags: None,
                 is_pending: None,
+                payee_id: None,
+                is_one_time: false,
             },
         )
         .unwrap();
@@ -1526,6 +1540,8 @@ mod tests {
                 notes: None,
                 tags: None,
                 is_pending: None,
+                payee_id: None,
+                is_one_time: false,
             },
         )
         .unwrap();
@@ -1631,6 +1647,8 @@ mod tests {
                 notes: None,
                 tags: None,
                 is_pending: None,
+                payee_id: None,
+                is_one_time: false,
             },
         )
         .unwrap();

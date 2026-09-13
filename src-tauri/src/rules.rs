@@ -257,6 +257,128 @@ pub fn delete_rule(state: State<DbState>, id: i64) -> Result<(), String> {
     delete(&conn, id).map_err(|e| e.to_string())
 }
 
+/// Correction-to-rule workflow (product handoff sections 18-21). The owner
+/// has just corrected one transaction's merchant/category by hand; this
+/// applies that same correction more broadly, in whichever combination they
+/// chose - never silently, never as a side effect of the plain edit itself.
+/// Reuses `MatchType::matches` (the exact function `best_match` already
+/// uses for import staging) for "past" - no second matching engine.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CorrectionScope {
+    FutureOnly,
+    PastOnly,
+    PastAndFuture,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CorrectionResult {
+    pub rule: Option<MerchantRule>,
+    pub past_transactions_updated: i64,
+}
+
+pub fn apply_correction(
+    conn: &mut Connection,
+    rule_input: &MerchantRuleInput,
+    scope: CorrectionScope,
+) -> Result<CorrectionResult, String> {
+    let rule = if matches!(
+        scope,
+        CorrectionScope::FutureOnly | CorrectionScope::PastAndFuture
+    ) {
+        Some(create(conn, rule_input).map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
+
+    let past_transactions_updated = if matches!(
+        scope,
+        CorrectionScope::PastOnly | CorrectionScope::PastAndFuture
+    ) {
+        apply_to_existing_transactions(conn, rule_input)?
+    } else {
+        0
+    };
+
+    Ok(CorrectionResult {
+        rule,
+        past_transactions_updated,
+    })
+}
+
+/// Finds every non-archived transaction whose `raw_description` matches
+/// `rule_input` (scoped to its account, if it names one) and applies the
+/// same merchant/category/subcategory correction to each, in one
+/// transaction so a mid-batch failure leaves nothing partially applied.
+/// Fetches candidates and filters them in Rust via the shared
+/// `MatchType::matches` rather than translating each match type into SQL
+/// `LIKE` - a personal-finance transaction table is small enough that this
+/// is not a performance concern, and it guarantees "past" and "future"
+/// never disagree about what counts as a match.
+fn apply_to_existing_transactions(
+    conn: &mut Connection,
+    rule_input: &MerchantRuleInput,
+) -> Result<i64, String> {
+    let candidates: Vec<(i64, String)> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, raw_description FROM transactions
+                 WHERE is_archived = 0 AND (?1 IS NULL OR account_id = ?1)",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![rule_input.account_id], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| e.to_string())?
+    };
+
+    let pattern_lower = rule_input.match_value.trim().to_lowercase();
+    let matching_ids: Vec<i64> = candidates
+        .into_iter()
+        .filter(|(_, description)| {
+            rule_input
+                .match_type
+                .matches(&description.trim().to_lowercase(), &pattern_lower)
+        })
+        .map(|(id, _)| id)
+        .collect();
+
+    if matching_ids.is_empty() {
+        return Ok(0);
+    }
+
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    for id in &matching_ids {
+        let mut input = crate::transactions::get_for_edit(&tx, *id)?;
+        if let Some(merchant) = &rule_input.normalized_merchant {
+            input.merchant = Some(merchant.clone());
+        }
+        if rule_input.category.is_some() {
+            input.category = rule_input.category.clone();
+        }
+        if rule_input.subcategory.is_some() {
+            input.subcategory = rule_input.subcategory.clone();
+        }
+        crate::transactions::update(&tx, *id, &input).map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+
+    Ok(matching_ids.len() as i64)
+}
+
+#[tauri::command]
+pub fn apply_correction_command(
+    state: State<DbState>,
+    rule_input: MerchantRuleInput,
+    scope: CorrectionScope,
+) -> Result<CorrectionResult, String> {
+    let mut conn = state.0.lock().map_err(|e| e.to_string())?;
+    apply_correction(&mut conn, &rule_input, scope)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,6 +405,10 @@ mod tests {
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0011_reconciliation.sql"))
             .unwrap();
+        conn.execute_batch(include_str!(
+            "../migrations/0012_transaction_intelligence.sql"
+        ))
+        .unwrap();
         conn
     }
 
@@ -468,5 +594,175 @@ mod tests {
             delete(&conn, created.id),
             Err(RuleError::NotFound(_))
         ));
+    }
+
+    // --- Correction-to-rule workflow (specs/phase-012) ---
+
+    fn make_txn(conn: &Connection, account_id: i64, raw_description: &str) -> i64 {
+        crate::transactions::create(
+            conn,
+            &crate::transactions::TransactionInput {
+                account_id,
+                transaction_date: "2026-08-05".to_string(),
+                posted_date: None,
+                amount_cents: -1000,
+                transaction_type: crate::transactions::TransactionType::Purchase,
+                raw_description: raw_description.to_string(),
+                merchant: None,
+                category: None,
+                subcategory: None,
+                notes: None,
+                tags: None,
+                is_pending: None,
+                payee_id: None,
+                is_one_time: false,
+            },
+        )
+        .unwrap()
+        .id
+    }
+
+    fn correction(match_value: &str, account_id: Option<i64>) -> MerchantRuleInput {
+        MerchantRuleInput {
+            match_type: MatchType::Contains,
+            match_value: match_value.to_string(),
+            account_id,
+            normalized_merchant: Some("Sunrise Cafe".to_string()),
+            category: Some("Dining".to_string()),
+            subcategory: None,
+            priority: 0,
+        }
+    }
+
+    #[test]
+    fn future_only_saves_a_rule_but_never_touches_existing_transactions() {
+        let mut conn = test_conn();
+        let account_id = make_account(&conn);
+        let existing = make_txn(&conn, account_id, "SQ *SUNRISE 3918");
+
+        let result = apply_correction(
+            &mut conn,
+            &correction("sunrise", None),
+            CorrectionScope::FutureOnly,
+        )
+        .unwrap();
+        assert!(result.rule.is_some());
+        assert_eq!(result.past_transactions_updated, 0);
+
+        let txn = crate::transactions::list(
+            &conn,
+            &crate::transactions::TransactionFilter {
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .into_iter()
+        .find(|t| t.id == existing)
+        .unwrap();
+        assert_eq!(
+            txn.category, None,
+            "future-only must never touch a transaction that already exists"
+        );
+        assert_eq!(list(&conn).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn past_only_updates_matching_transactions_but_saves_no_rule() {
+        let mut conn = test_conn();
+        let account_id = make_account(&conn);
+        let matching = make_txn(&conn, account_id, "SQ *SUNRISE 3918");
+        let unrelated = make_txn(&conn, account_id, "WHOLE FOODS #42");
+
+        let result = apply_correction(
+            &mut conn,
+            &correction("sunrise", None),
+            CorrectionScope::PastOnly,
+        )
+        .unwrap();
+        assert!(result.rule.is_none(), "past-only must not save a rule");
+        assert_eq!(result.past_transactions_updated, 1);
+        assert_eq!(list(&conn).unwrap().len(), 0);
+
+        let all = crate::transactions::list(
+            &conn,
+            &crate::transactions::TransactionFilter {
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let fixed = all.iter().find(|t| t.id == matching).unwrap();
+        assert_eq!(fixed.merchant, "Sunrise Cafe");
+        assert_eq!(fixed.category.as_deref(), Some("Dining"));
+        let other = all.iter().find(|t| t.id == unrelated).unwrap();
+        assert_eq!(
+            other.category, None,
+            "a non-matching transaction must be completely unaffected"
+        );
+    }
+
+    #[test]
+    fn past_and_future_does_both() {
+        let mut conn = test_conn();
+        let account_id = make_account(&conn);
+        make_txn(&conn, account_id, "SQ *SUNRISE 3918");
+
+        let result = apply_correction(
+            &mut conn,
+            &correction("sunrise", None),
+            CorrectionScope::PastAndFuture,
+        )
+        .unwrap();
+        assert!(result.rule.is_some());
+        assert_eq!(result.past_transactions_updated, 1);
+        assert_eq!(list(&conn).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_correction_scoped_to_one_account_never_touches_a_different_account() {
+        let mut conn = test_conn();
+        let account_a = make_account(&conn);
+        let account_b = make_account(&conn);
+        make_txn(&conn, account_a, "SQ *SUNRISE 3918");
+        let other_account_txn = make_txn(&conn, account_b, "SQ *SUNRISE 3918");
+
+        apply_correction(
+            &mut conn,
+            &correction("sunrise", Some(account_a)),
+            CorrectionScope::PastOnly,
+        )
+        .unwrap();
+
+        let untouched = crate::transactions::list(
+            &conn,
+            &crate::transactions::TransactionFilter {
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .into_iter()
+        .find(|t| t.id == other_account_txn)
+        .unwrap();
+        assert_eq!(untouched.category, None);
+    }
+
+    #[test]
+    fn applying_a_correction_does_not_regress_normal_import_stage_rule_matching() {
+        // The correction-to-rule workflow must save an ordinary rule via
+        // the exact same `create` every other rule uses - staging
+        // (best_match/relevant_rules) must apply it identically afterward.
+        let mut conn = test_conn();
+        let account_id = make_account(&conn);
+
+        apply_correction(
+            &mut conn,
+            &correction("sunrise", None),
+            CorrectionScope::FutureOnly,
+        )
+        .unwrap();
+
+        let rules = relevant_rules(&conn, account_id).unwrap();
+        let result = best_match(&rules, "SQ *SUNRISE 4471 MIAMI FL").unwrap();
+        assert_eq!(result.merchant.as_deref(), Some("Sunrise Cafe"));
+        assert_eq!(result.category.as_deref(), Some("Dining"));
     }
 }

@@ -29,15 +29,29 @@ pub struct CategoryTotal {
 /// Reuses `TransactionType::from_sql_str`/`accounting::spending_effect`
 /// directly, so a category total is never classified differently than
 /// `spending_in_range` would classify the same transaction.
+///
+/// Split-aware (Transaction Intelligence, specs/phase-012): a transaction
+/// with rows in `transaction_splits` contributes its *children's*
+/// category/amount pairs instead of its own single one - the parent's own
+/// `amount_cents` is never also counted, so a split transaction's total
+/// contribution here is still exactly its own ledger amount, just broken
+/// across categories rather than lumped into one. An unsplit transaction's
+/// query branch is byte-identical to before this batch.
 pub fn spending_by_category(
     conn: &Connection,
     from: &str,
     to: &str,
 ) -> rusqlite::Result<Vec<CategoryTotal>> {
     let mut stmt = conn.prepare(
-        "SELECT COALESCE(category, 'Uncategorized'), amount_cents, transaction_type
-         FROM transactions
-         WHERE transaction_date >= ?1 AND transaction_date <= ?2 AND is_archived = 0",
+        "SELECT COALESCE(s.category, 'Uncategorized'), s.amount_cents, t.transaction_type
+         FROM transactions t
+         JOIN transaction_splits s ON s.transaction_id = t.id
+         WHERE t.transaction_date >= ?1 AND t.transaction_date <= ?2 AND t.is_archived = 0
+         UNION ALL
+         SELECT COALESCE(t.category, 'Uncategorized'), t.amount_cents, t.transaction_type
+         FROM transactions t
+         WHERE t.transaction_date >= ?1 AND t.transaction_date <= ?2 AND t.is_archived = 0
+           AND NOT EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = t.id)",
     )?;
     let rows: Vec<(String, i64, String)> = stmt
         .query_map(params![from, to], |row| {
@@ -148,6 +162,10 @@ mod tests {
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0011_reconciliation.sql"))
             .unwrap();
+        conn.execute_batch(include_str!(
+            "../migrations/0012_transaction_intelligence.sql"
+        ))
+        .unwrap();
         conn
     }
 
@@ -189,6 +207,8 @@ mod tests {
                 notes: None,
                 tags: None,
                 is_pending: None,
+                payee_id: None,
+                is_one_time: false,
             },
         )
         .unwrap();
@@ -262,6 +282,96 @@ mod tests {
                     spent_cents: 7000
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn spending_by_category_expands_a_split_transaction_into_its_childrens_categories() {
+        let mut conn = test_conn();
+        let account = make_account(&conn);
+        let walmart_id = transactions::create(
+            &conn,
+            &TransactionInput {
+                account_id: account,
+                transaction_date: "2026-08-05".to_string(),
+                posted_date: None,
+                amount_cents: -12000,
+                transaction_type: TransactionType::Purchase,
+                raw_description: "Walmart".to_string(),
+                merchant: None,
+                category: Some("Shopping".to_string()),
+                subcategory: None,
+                notes: None,
+                tags: None,
+                is_pending: None,
+                payee_id: None,
+                is_one_time: false,
+            },
+        )
+        .unwrap()
+        .id;
+        crate::splits::replace_for_transaction(
+            &mut conn,
+            walmart_id,
+            &[
+                crate::splits::SplitInput {
+                    category: Some("Groceries".to_string()),
+                    subcategory: None,
+                    amount_cents: -8000,
+                    notes: None,
+                },
+                crate::splits::SplitInput {
+                    category: Some("Household".to_string()),
+                    subcategory: None,
+                    amount_cents: -4000,
+                    notes: None,
+                },
+            ],
+        )
+        .unwrap();
+        add_txn(
+            &conn,
+            account,
+            "2026-08-06",
+            -3000,
+            TransactionType::Purchase,
+            Some("Dining"),
+        );
+
+        let totals = spending_by_category(&conn, "2026-08-01", "2026-08-31").unwrap();
+        assert!(
+            totals.iter().all(|c| c.category != "Shopping"),
+            "the parent's own category must not also appear once it has been split: {totals:?}"
+        );
+        assert_eq!(
+            totals
+                .iter()
+                .find(|c| c.category == "Groceries")
+                .unwrap()
+                .spent_cents,
+            8000
+        );
+        assert_eq!(
+            totals
+                .iter()
+                .find(|c| c.category == "Household")
+                .unwrap()
+                .spent_cents,
+            4000
+        );
+        assert_eq!(
+            totals
+                .iter()
+                .find(|c| c.category == "Dining")
+                .unwrap()
+                .spent_cents,
+            3000,
+            "an ordinary unsplit transaction in the same range must be completely unaffected"
+        );
+        let total_spending: i64 = totals.iter().map(|c| c.spent_cents).sum();
+        assert_eq!(
+            total_spending, 15000,
+            "12000 (split across two categories) + 3000 (unsplit) - never double-counted"
         );
     }
 

@@ -79,6 +79,10 @@ mod tests {
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0011_reconciliation.sql"))
             .unwrap();
+        conn.execute_batch(include_str!(
+            "../migrations/0012_transaction_intelligence.sql"
+        ))
+        .unwrap();
         conn
     }
 

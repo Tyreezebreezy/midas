@@ -54,6 +54,11 @@ pub struct Payee {
     /// `Some(target_id)` once merged - the row is kept (never deleted) so
     /// anything still naming it can resolve to where it went.
     pub merged_into_payee_id: Option<i64>,
+    /// Non-archived transactions currently linked to this payee - computed
+    /// live (a correlated subquery, same pattern as
+    /// `accounts::balance_cents`), so it's always exactly what a merge or
+    /// archive would actually move/hide, never a count that could drift.
+    pub transaction_count: i64,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -88,8 +93,8 @@ impl From<rusqlite::Error> for PayeeError {
     }
 }
 
-const COLUMNS: &str =
-    "id, name, payee_type, notes, is_archived, merged_into_payee_id, created_at, updated_at";
+const COLUMNS: &str = "id, name, payee_type, notes, is_archived, merged_into_payee_id, created_at, updated_at, \
+    (SELECT COUNT(*) FROM transactions WHERE transactions.payee_id = payees.id AND transactions.is_archived = 0) AS transaction_count";
 
 fn row_to_payee(row: &rusqlite::Row) -> rusqlite::Result<Payee> {
     Ok(Payee {
@@ -99,6 +104,7 @@ fn row_to_payee(row: &rusqlite::Row) -> rusqlite::Result<Payee> {
         notes: row.get("notes")?,
         is_archived: row.get::<_, i64>("is_archived")? != 0,
         merged_into_payee_id: row.get("merged_into_payee_id")?,
+        transaction_count: row.get("transaction_count")?,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
     })
@@ -273,6 +279,10 @@ mod tests {
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0011_reconciliation.sql"))
             .unwrap();
+        conn.execute_batch(include_str!(
+            "../migrations/0012_transaction_intelligence.sql"
+        ))
+        .unwrap();
         conn
     }
 
@@ -315,6 +325,8 @@ mod tests {
                 notes: None,
                 tags: None,
                 is_pending: None,
+                payee_id: None,
+                is_one_time: false,
             },
         )
         .unwrap();
@@ -427,14 +439,7 @@ mod tests {
         let txn = transactions::list(
             &conn,
             &transactions::TransactionFilter {
-                account_id: None,
-                search: None,
-                category: None,
-                date_from: None,
-                date_to: None,
-                include_archived: false,
-                needs_review_only: false,
-                source_import_id: None,
+                ..Default::default()
             },
         )
         .unwrap()

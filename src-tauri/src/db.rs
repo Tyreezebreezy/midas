@@ -14,6 +14,7 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0009_import_engine_v2.sql"),
     include_str!("../migrations/0010_ofx_source_adapter.sql"),
     include_str!("../migrations/0011_reconciliation.sql"),
+    include_str!("../migrations/0012_transaction_intelligence.sql"),
 ];
 
 /// The schema version this build knows how to read and write - always
@@ -273,7 +274,7 @@ mod tests {
             conn.execute_batch(sql).unwrap();
         }
         conn.pragma_update(None, "user_version", 7).unwrap();
-        assert_eq!(MIGRATIONS.len(), 11, "this test targets exactly the v0.1.0 -> Foundation Batch 1 boundary; update the slice above if more migrations are added before this one");
+        assert_eq!(MIGRATIONS.len(), 12, "this test targets exactly the v0.1.0 -> Foundation Batch 1 boundary; update the slice above if more migrations are added before this one");
 
         conn.execute(
             "INSERT INTO accounts (id, name, institution, account_type, include_in_net_worth, notes)
@@ -479,7 +480,7 @@ mod tests {
             conn.execute_batch(sql).unwrap();
         }
         conn.pragma_update(None, "user_version", 8).unwrap();
-        assert_eq!(MIGRATIONS.len(), 11, "this test targets exactly the Foundation Batch 1 -> Import Engine v2 boundary; update the slice above if more migrations are added before this one");
+        assert_eq!(MIGRATIONS.len(), 12, "this test targets exactly the Foundation Batch 1 -> Import Engine v2 boundary; update the slice above if more migrations are added before this one");
 
         conn.execute(
             "INSERT INTO accounts (id, name, account_type, include_in_net_worth) VALUES (1, 'Checking', 'checking', 1)",
@@ -555,7 +556,7 @@ mod tests {
             conn.execute_batch(sql).unwrap();
         }
         conn.pragma_update(None, "user_version", 9).unwrap();
-        assert_eq!(MIGRATIONS.len(), 11, "this test targets exactly the Import Engine v2 -> OFX source adapter boundary; update the slice above if more migrations are added before this one");
+        assert_eq!(MIGRATIONS.len(), 12, "this test targets exactly the Import Engine v2 -> OFX source adapter boundary; update the slice above if more migrations are added before this one");
 
         conn.execute(
             "INSERT INTO accounts (id, name, account_type, include_in_net_worth) VALUES (1, 'Checking', 'checking', 1)",
@@ -695,6 +696,60 @@ mod tests {
         assert_eq!(
             reconciliation_count, 0,
             "reconciliations must exist and start empty"
+        );
+    }
+
+    /// Transaction Intelligence (specs/phase-012) adds exactly one new
+    /// table, `transaction_splits` - no columns touched on any existing
+    /// table (payee_id/is_one_time already existed from Foundation Batch 1;
+    /// this batch only makes them settable in application code). Same proof
+    /// shape as the migrations above, scoped to the 0011 -> 0012 boundary.
+    #[test]
+    fn migration_0012_preserves_existing_data_and_adds_only_the_splits_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        for sql in &MIGRATIONS[0..11] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 11).unwrap();
+        assert_eq!(MIGRATIONS.len(), 12, "this test targets exactly the Reconciliation -> Transaction Intelligence boundary; update the slice above if more migrations are added before this one");
+
+        conn.execute(
+            "INSERT INTO accounts (id, name, account_type, include_in_net_worth) VALUES (1, 'Checking', 'checking', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO transactions (id, account_id, transaction_date, amount_cents, transaction_type, raw_description, merchant)
+             VALUES (1, 1, '2026-08-05', -12000, 'purchase', 'Walmart', 'Walmart')",
+            [],
+        )
+        .unwrap();
+
+        conn.execute_batch(MIGRATIONS[11]).unwrap();
+        conn.pragma_update(None, "user_version", 12).unwrap();
+
+        let version: i32 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 12);
+
+        let (merchant, amount): (String, i64) = conn
+            .query_row(
+                "SELECT merchant, amount_cents FROM transactions WHERE id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(merchant, "Walmart");
+        assert_eq!(amount, -12000);
+
+        let split_count: i64 = conn
+            .query_row("SELECT count(*) FROM transaction_splits", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            split_count, 0,
+            "transaction_splits must exist and start empty"
         );
     }
 }

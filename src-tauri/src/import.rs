@@ -1777,12 +1777,18 @@ fn get_undone_at(conn: &Connection, import_id: i64) -> Result<Option<String>, St
 fn removable_transaction_ids(conn: &Connection, import_id: i64) -> Result<(Vec<i64>, i64), String> {
     // `created_at == updated_at` alone proves nothing about tags, which
     // attach via a separate `transaction_tags` join row without ever
-    // touching the transaction itself (found during this batch's Undo
+    // touching the transaction itself (found during Batch 3's Undo
     // hardening review - product handoff section 26: "created_at ==
     // updated_at does not necessarily prove that nothing meaningful was
-    // attached after import"). Split and manual transfer/refund links are
-    // checked in both directions - a transaction is protected whether it's
-    // the one pointing at another or the one being pointed at.
+    // attached after import"). Same reasoning extends to splits (Transaction
+    // Intelligence, specs/phase-012): `transaction_splits` rows never touch
+    // the parent's own `updated_at` either, so a split transaction is
+    // protected by its own existence check, not by the timestamp.
+    // `c.split_parent_transaction_id = t.id` is checked defensively even
+    // though nothing has ever written it (see transactions.rs's doc comment
+    // on that column) - manual transfer/refund links are checked in both
+    // directions, a transaction protected whether it's the one pointing at
+    // another or the one being pointed at.
     let mut stmt = conn
         .prepare(
             "SELECT t.id FROM transactions t
@@ -1791,6 +1797,7 @@ fn removable_transaction_ids(conn: &Connection, import_id: i64) -> Result<(Vec<i
                AND t.transfer_pair_transaction_id IS NULL
                AND t.refund_of_transaction_id IS NULL
                AND NOT EXISTS (SELECT 1 FROM transaction_tags tt WHERE tt.transaction_id = t.id)
+               AND NOT EXISTS (SELECT 1 FROM transaction_splits ts WHERE ts.transaction_id = t.id)
                AND NOT EXISTS (
                     SELECT 1 FROM transactions c
                     WHERE c.split_parent_transaction_id = t.id
@@ -1904,6 +1911,10 @@ mod tests {
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0011_reconciliation.sql"))
             .unwrap();
+        conn.execute_batch(include_str!(
+            "../migrations/0012_transaction_intelligence.sql"
+        ))
+        .unwrap();
         conn
     }
 
@@ -2342,6 +2353,8 @@ mod tests {
                 notes: None,
                 tags: None,
                 is_pending: None,
+                payee_id: None,
+                is_one_time: false,
             },
         )
         .unwrap();
@@ -2842,6 +2855,8 @@ mod tests {
             notes: None,
             tags: None,
             is_pending: None,
+            payee_id: None,
+            is_one_time: false,
         };
         crate::transactions::update(&conn, edited.id, &edit_input).unwrap();
         edit_input.category = None;
@@ -2977,6 +2992,8 @@ mod tests {
                 notes: None,
                 tags: None,
                 is_pending: None,
+                payee_id: None,
+                is_one_time: false,
             },
         )
         .unwrap();
@@ -2990,6 +3007,76 @@ mod tests {
         assert_eq!(
             preview.protected_count, 1,
             "the transaction referenced by another transaction's refund_of_transaction_id must be protected"
+        );
+    }
+
+    #[test]
+    fn undo_protects_a_split_transaction_even_though_splitting_never_touches_updated_at() {
+        // Transaction Intelligence (specs/phase-012): splits live in a
+        // separate transaction_splits table and never touch the parent's
+        // own updated_at, exactly the same shape of gap Batch 3 found and
+        // fixed for tags - re-audited here since a genuinely new child
+        // table was added after that audit was written.
+        let mut conn = test_conn();
+        let account_id = make_account(&conn, AccountType::Checking);
+        let summary = commit_simple(
+            &mut conn,
+            account_id,
+            "statement.csv",
+            "Date,Description,Amount\n2026-03-01,WALMART,-120.00\n2026-03-02,PAYCHECK,2000.00\n",
+            &signed_amount_mapping(),
+        )
+        .unwrap();
+        let imported = crate::transactions::list(
+            &conn,
+            &TransactionFilter {
+                source_import_id: Some(summary.import_id),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let walmart = imported
+            .iter()
+            .find(|t| t.raw_description == "WALMART")
+            .unwrap();
+        assert_eq!(
+            walmart.created_at, walmart.updated_at,
+            "sanity check: splitting alone must not have bumped updated_at"
+        );
+
+        crate::splits::replace_for_transaction(
+            &mut conn,
+            walmart.id,
+            &[
+                crate::splits::SplitInput {
+                    category: Some("Groceries".to_string()),
+                    subcategory: None,
+                    amount_cents: -8000,
+                    notes: None,
+                },
+                crate::splits::SplitInput {
+                    category: Some("Household".to_string()),
+                    subcategory: None,
+                    amount_cents: -4000,
+                    notes: None,
+                },
+            ],
+        )
+        .unwrap();
+
+        let preview = preview_undo(&conn, summary.import_id).unwrap();
+        assert_eq!(preview.removable_count, 1);
+        assert_eq!(preview.protected_count, 1);
+
+        let result = undo(&mut conn, summary.import_id).unwrap();
+        assert_eq!(result.removed_count, 1);
+        assert_eq!(result.protected_count, 1);
+        assert_eq!(
+            crate::splits::list_for_transaction(&conn, walmart.id)
+                .unwrap()
+                .len(),
+            2,
+            "a split transaction must survive Undo with its splits intact"
         );
     }
 

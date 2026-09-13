@@ -144,6 +144,10 @@ mod tests {
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0011_reconciliation.sql"))
             .unwrap();
+        conn.execute_batch(include_str!(
+            "../migrations/0012_transaction_intelligence.sql"
+        ))
+        .unwrap();
         conn
     }
 
@@ -210,6 +214,8 @@ mod tests {
                 notes: None,
                 tags: None,
                 is_pending: None,
+                payee_id: None,
+                is_one_time: false,
             },
         )
         .unwrap();

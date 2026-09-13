@@ -122,15 +122,20 @@ pub struct Transaction {
     pub source_row_hash: Option<String>,
     pub transfer_pair_transaction_id: Option<i64>,
     pub refund_of_transaction_id: Option<i64>,
-    /// Foundation Batch 1 (specs/phase-008) - not yet populated by any
-    /// feature. `merchant` above remains the authoritative display value
-    /// until a later batch implements Payee Library normalization/linking.
+    /// Set via the Payee Library (Transaction Intelligence, specs/phase-012).
+    /// `merchant` above remains the raw/normalized display text regardless -
+    /// this is the separate, mergeable canonical identity.
     pub payee_id: Option<i64>,
-    /// Foundation Batch 1 - not yet populated. A future split-transaction
-    /// feature will point each child row at the original it was split from;
-    /// the original is expected to be archived at that point (already
-    /// excluded from every balance/spending query), so a populated parent
-    /// is never double-counted once that feature lands.
+    /// Foundation Batch 1 - never populated. Its original design (each
+    /// split as its own archived-parent-plus-child-rows `transactions`
+    /// entries) was superseded before any code used it: product handoff
+    /// section 14 for Transaction Intelligence (specs/phase-012) explicitly
+    /// requires that split children never become separate ledger movements,
+    /// so splits are instead a distinct child table (`transaction_splits`)
+    /// that never touches this column or `transactions` at all. Left in the
+    /// schema rather than dropped, since altering a committed migration is
+    /// against this project's own discipline and a nullable, always-`NULL`
+    /// column costs nothing.
     pub split_parent_transaction_id: Option<i64>,
     /// Foundation Batch 1 - not yet populated. The source's own unique
     /// transaction ID (e.g. OFX `<TRNUID>`), for a future importer that has
@@ -142,10 +147,16 @@ pub struct Transaction {
     /// transactions. Freed back to `None` when that reconciliation is
     /// reopened (`reconciliation::reopen`).
     pub reconciliation_id: Option<i64>,
-    /// Foundation Batch 1 - not yet settable from the UI. An analytical
-    /// flag a future feature can use to exclude a one-off purchase from a
-    /// budget-suggestion or recurring-detection baseline.
+    /// An analytical flag (Transaction Intelligence, specs/phase-012):
+    /// legitimate but unusual spending the owner wants excluded from a
+    /// future "normal monthly spending" baseline, without deleting,
+    /// recategorizing, or removing it from actual spending totals now.
     pub is_one_time: bool,
+    /// Whether `transaction_splits` has any rows for this transaction -
+    /// computed live (a correlated subquery, same pattern as
+    /// `accounts::balance_cents`), never a separate stored flag that could
+    /// drift from the child table's actual contents.
+    pub has_splits: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -164,6 +175,12 @@ pub struct TransactionInput {
     pub notes: Option<String>,
     pub tags: Option<String>,
     pub is_pending: Option<bool>,
+    /// Transaction Intelligence (specs/phase-012) - the canonical Payee
+    /// Library identity, distinct from the free-text `merchant` field.
+    #[serde(default)]
+    pub payee_id: Option<i64>,
+    #[serde(default)]
+    pub is_one_time: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -182,6 +199,18 @@ pub struct TransactionFilter {
     /// else has happened to them since.
     #[serde(default)]
     pub source_import_id: Option<i64>,
+    /// Transaction Intelligence filters (specs/phase-012). Transactions
+    /// without a canonical payee are unaffected by `payee_id` (simply never
+    /// match it) and stay searchable via `search` against their raw/merchant
+    /// text (section 27).
+    #[serde(default)]
+    pub payee_id: Option<i64>,
+    #[serde(default)]
+    pub tag_id: Option<i64>,
+    #[serde(default)]
+    pub reconciliation_status: Option<ReconciliationStatus>,
+    #[serde(default)]
+    pub is_one_time: Option<bool>,
 }
 
 #[derive(Debug)]
@@ -216,7 +245,8 @@ const COLUMNS: &str = "id, account_id, transaction_date, posted_date, amount_cen
     raw_description, merchant, category, subcategory, notes, tags, is_pending, is_archived, review_status, \
     source_import_id, source_row_hash, transfer_pair_transaction_id, refund_of_transaction_id, \
     payee_id, split_parent_transaction_id, external_transaction_id, reconciliation_status, reconciliation_id, is_one_time, \
-    created_at, updated_at";
+    created_at, updated_at, \
+    EXISTS(SELECT 1 FROM transaction_splits WHERE transaction_splits.transaction_id = transactions.id) AS has_splits";
 
 fn row_to_transaction(row: &rusqlite::Row) -> rusqlite::Result<Transaction> {
     Ok(Transaction {
@@ -249,6 +279,7 @@ fn row_to_transaction(row: &rusqlite::Row) -> rusqlite::Result<Transaction> {
         )?,
         reconciliation_id: row.get("reconciliation_id")?,
         is_one_time: row.get::<_, i64>("is_one_time")? != 0,
+        has_splits: row.get::<_, i64>("has_splits")? != 0,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
     })
@@ -288,8 +319,9 @@ pub fn create(
     let id = conn.query_row(
         "INSERT INTO transactions (
             account_id, transaction_date, posted_date, amount_cents, transaction_type,
-            raw_description, merchant, category, subcategory, notes, tags, is_pending
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            raw_description, merchant, category, subcategory, notes, tags, is_pending,
+            payee_id, is_one_time
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
         RETURNING id",
         params![
             input.account_id,
@@ -304,6 +336,8 @@ pub fn create(
             input.notes,
             input.tags,
             input.is_pending.map(|v| v as i64),
+            input.payee_id,
+            input.is_one_time as i64,
         ],
         |row| row.get::<_, i64>(0),
     )?;
@@ -318,6 +352,33 @@ fn get(conn: &Connection, id: i64) -> Result<Option<Transaction>, TransactionErr
     )
     .optional()
     .map_err(TransactionError::from)
+}
+
+/// Fetches a transaction and reshapes it back into `TransactionInput` -
+/// the "fetch, tweak one field, write back through the normal `update`
+/// path" pattern `bulk.rs` uses so every bulk action reuses the exact same
+/// validation and reconciliation-invalidation logic a single-transaction
+/// edit already has, rather than a second, bulk-specific mutation path.
+pub fn get_for_edit(conn: &Connection, id: i64) -> Result<TransactionInput, String> {
+    let t = get(conn, id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("transaction {id} not found"))?;
+    Ok(TransactionInput {
+        account_id: t.account_id,
+        transaction_date: t.transaction_date,
+        posted_date: t.posted_date,
+        amount_cents: t.amount_cents,
+        transaction_type: t.transaction_type,
+        raw_description: t.raw_description,
+        merchant: Some(t.merchant),
+        category: t.category,
+        subcategory: t.subcategory,
+        notes: t.notes,
+        tags: t.tags,
+        is_pending: t.is_pending,
+        payee_id: t.payee_id,
+        is_one_time: t.is_one_time,
+    })
 }
 
 pub fn list(
@@ -365,6 +426,25 @@ pub fn list(
         clauses.push(format!("source_import_id = ?{}", args.len() + 1));
         args.push(Box::new(source_import_id));
     }
+    if let Some(payee_id) = filter.payee_id {
+        clauses.push(format!("payee_id = ?{}", args.len() + 1));
+        args.push(Box::new(payee_id));
+    }
+    if let Some(tag_id) = filter.tag_id {
+        clauses.push(format!(
+            "id IN (SELECT transaction_id FROM transaction_tags WHERE tag_id = ?{})",
+            args.len() + 1
+        ));
+        args.push(Box::new(tag_id));
+    }
+    if let Some(status) = filter.reconciliation_status {
+        clauses.push(format!("reconciliation_status = ?{}", args.len() + 1));
+        args.push(Box::new(status.as_sql_str()));
+    }
+    if let Some(is_one_time) = filter.is_one_time {
+        clauses.push(format!("is_one_time = ?{}", args.len() + 1));
+        args.push(Box::new(is_one_time as i64));
+    }
 
     let where_sql = if clauses.is_empty() {
         String::new()
@@ -382,7 +462,7 @@ pub fn list(
         .map_err(TransactionError::from)
 }
 
-fn format_dollars(cents: i64) -> String {
+pub(crate) fn format_dollars(cents: i64) -> String {
     let sign = if cents < 0 { "-" } else { "" };
     let abs = cents.unsigned_abs();
     format!("{sign}{}.{:02}", abs / 100, abs % 100)
@@ -492,8 +572,9 @@ pub fn update(
             account_id = ?1, transaction_date = ?2, posted_date = ?3, amount_cents = ?4,
             transaction_type = ?5, raw_description = ?6, merchant = ?7, category = ?8,
             subcategory = ?9, notes = ?10, tags = ?11, is_pending = ?12,
+            payee_id = ?13, is_one_time = ?14,
             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-         WHERE id = ?13",
+         WHERE id = ?15",
         params![
             input.account_id,
             date,
@@ -507,6 +588,8 @@ pub fn update(
             input.notes,
             input.tags,
             input.is_pending.map(|v| v as i64),
+            input.payee_id,
+            input.is_one_time as i64,
             id,
         ],
     )?;
@@ -683,6 +766,10 @@ mod tests {
             .unwrap();
         conn.execute_batch(include_str!("../migrations/0011_reconciliation.sql"))
             .unwrap();
+        conn.execute_batch(include_str!(
+            "../migrations/0012_transaction_intelligence.sql"
+        ))
+        .unwrap();
         conn
     }
 
@@ -715,6 +802,8 @@ mod tests {
             notes: None,
             tags: None,
             is_pending: None,
+            payee_id: None,
+            is_one_time: false,
         }
     }
 
@@ -1095,5 +1184,142 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, flagged.id);
         assert_ne!(results[0].id, plain.id);
+    }
+
+    // --- Transaction Intelligence (specs/phase-012) ---
+
+    #[test]
+    fn payee_id_and_is_one_time_are_settable_on_create_and_update() {
+        let conn = test_conn();
+        let account_id = make_account(&conn, AccountType::Checking);
+        let payee_id = crate::payees::create(
+            &conn,
+            &crate::payees::PayeeInput {
+                name: "Whole Foods".to_string(),
+                payee_type: crate::payees::PayeeType::Merchant,
+                notes: None,
+            },
+        )
+        .unwrap()
+        .id;
+
+        let mut input = sample_input(account_id);
+        input.payee_id = Some(payee_id);
+        input.is_one_time = true;
+        let created = create(&conn, &input).unwrap();
+        assert_eq!(created.payee_id, Some(payee_id));
+        assert!(created.is_one_time);
+
+        let mut edit = sample_input(account_id);
+        edit.payee_id = None;
+        edit.is_one_time = false;
+        let updated = update(&conn, created.id, &edit).unwrap();
+        assert_eq!(
+            updated.payee_id, None,
+            "payee can be explicitly cleared, not just set"
+        );
+        assert!(!updated.is_one_time);
+    }
+
+    #[test]
+    fn has_splits_reflects_the_transaction_splits_table_without_a_separate_flag() {
+        let conn = test_conn();
+        let account_id = make_account(&conn, AccountType::Checking);
+        let created = create(&conn, &sample_input(account_id)).unwrap();
+        assert!(!created.has_splits);
+
+        conn.execute(
+            "INSERT INTO transaction_splits (transaction_id, category, amount_cents) VALUES (?1, 'Groceries', -5000)",
+            params![created.id],
+        )
+        .unwrap();
+
+        let refetched = get(&conn, created.id).unwrap().unwrap();
+        assert!(refetched.has_splits);
+    }
+
+    #[test]
+    fn filters_by_payee_tag_reconciliation_status_and_one_time() {
+        let conn = test_conn();
+        let account_id = make_account(&conn, AccountType::Checking);
+        let payee_id = crate::payees::create(
+            &conn,
+            &crate::payees::PayeeInput {
+                name: "Costco".to_string(),
+                payee_type: crate::payees::PayeeType::Merchant,
+                notes: None,
+            },
+        )
+        .unwrap()
+        .id;
+
+        let mut with_payee = sample_input(account_id);
+        with_payee.payee_id = Some(payee_id);
+        let with_payee_id = create(&conn, &with_payee).unwrap().id;
+
+        let mut one_time = sample_input(account_id);
+        one_time.is_one_time = true;
+        let one_time_id = create(&conn, &one_time).unwrap().id;
+
+        let plain_id = create(&conn, &sample_input(account_id)).unwrap().id;
+        set_reconciliation_status(&conn, plain_id, ReconciliationStatus::Cleared).unwrap();
+
+        let tag = crate::tags::create(&conn, "Business").unwrap();
+        crate::tags::attach(&conn, with_payee_id, tag.id).unwrap();
+
+        assert_eq!(
+            list(
+                &conn,
+                &TransactionFilter {
+                    payee_id: Some(payee_id),
+                    ..Default::default()
+                }
+            )
+            .unwrap()
+            .iter()
+            .map(|t| t.id)
+            .collect::<Vec<_>>(),
+            vec![with_payee_id]
+        );
+        assert_eq!(
+            list(
+                &conn,
+                &TransactionFilter {
+                    tag_id: Some(tag.id),
+                    ..Default::default()
+                }
+            )
+            .unwrap()
+            .len(),
+            1
+        );
+        assert_eq!(
+            list(
+                &conn,
+                &TransactionFilter {
+                    is_one_time: Some(true),
+                    ..Default::default()
+                }
+            )
+            .unwrap()
+            .iter()
+            .map(|t| t.id)
+            .collect::<Vec<_>>(),
+            vec![one_time_id]
+        );
+        assert_eq!(
+            list(
+                &conn,
+                &TransactionFilter {
+                    reconciliation_status: Some(ReconciliationStatus::Cleared),
+                    ..Default::default()
+                }
+            )
+            .unwrap()
+            .iter()
+            .map(|t| t.id)
+            .collect::<Vec<_>>(),
+            vec![plain_id]
+        );
     }
 }

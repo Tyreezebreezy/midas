@@ -2,6 +2,8 @@ mod accounting;
 mod accounts;
 mod backup;
 mod budgets;
+mod bulk;
+mod categories;
 mod dates;
 mod db;
 mod import;
@@ -20,6 +22,7 @@ mod rules;
 mod safe_to_spend;
 mod savings_goals;
 mod settings;
+mod splits;
 mod tags;
 mod transactions;
 
@@ -116,6 +119,16 @@ pub fn run() {
             reconciliation::get_reconciliation_summary,
             reconciliation::get_latest_statement_hint,
             reconciliation::get_running_balances,
+            splits::list_splits,
+            splits::set_splits,
+            categories::rename_category,
+            bulk::bulk_set_category,
+            bulk::bulk_set_payee,
+            bulk::bulk_set_one_time,
+            bulk::bulk_set_archived,
+            bulk::bulk_add_tag,
+            bulk::bulk_remove_tag,
+            rules::apply_correction_command,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Tauri application");
