@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Account, Reconciliation } from "./api/midas";
 import { reconciliationApi } from "./api/midas";
-import { formatCents } from "./lib/currency";
+import { formatCents, useMasked } from "./lib/currency";
 import { formatDate } from "./lib/dateFormat";
 
 interface ReconciliationHistoryDialogProps {
@@ -19,6 +19,7 @@ function ReconciliationHistoryDialog({
   account,
   onClose,
 }: ReconciliationHistoryDialogProps) {
+  useMasked();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [records, setRecords] = useState<Reconciliation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -130,7 +131,7 @@ function ReconciliationHistoryDialog({
                       </button>
                       <button
                         type="button"
-                        className="btn-primary"
+                        className="btn-danger"
                         onClick={confirmReopen}
                         disabled={busy}
                       >
@@ -143,7 +144,7 @@ function ReconciliationHistoryDialog({
                     <div className="dialog-actions">
                       <button
                         type="button"
-                        className="btn-link"
+                        className="btn-link btn-link-danger"
                         onClick={() => setReopening(r)}
                       >
                         Reopen

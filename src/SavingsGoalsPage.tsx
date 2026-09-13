@@ -5,6 +5,7 @@ import {
   centsToDollarInput,
   formatCents,
   parseDollarsToCents,
+  useMasked,
 } from "./lib/currency";
 import { formatDate } from "./lib/dateFormat";
 
@@ -105,7 +106,9 @@ function GoalForm({
         <h2 id="goal-form-title">{goal ? "Edit goal" : "Add goal"}</h2>
 
         <div className="field">
-          <label htmlFor="goal-name">Name</label>
+          <label htmlFor="goal-name" className="field-required">
+            Name
+          </label>
           <input
             id="goal-name"
             value={name}
@@ -188,6 +191,7 @@ function GoalForm({
 }
 
 function SavingsGoalsPage() {
+  useMasked();
   const [goals, setGoals] = useState<SavingsGoal[]>([]);
   const [showArchived, setShowArchived] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -222,9 +226,9 @@ function SavingsGoalsPage() {
 
   return (
     <section aria-labelledby="goals-heading">
-      <div className="accounts-toolbar">
+      <div className="page-toolbar">
         <h1 id="goals-heading">Savings Goals</h1>
-        <div className="accounts-toolbar-actions">
+        <div className="page-toolbar-actions">
           <label className="show-archived-toggle">
             <input
               type="checkbox"

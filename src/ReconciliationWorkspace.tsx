@@ -8,7 +8,12 @@ import type {
 import { reconciliationApi, transactionsApi } from "./api/midas";
 import TransactionForm from "./TransactionForm";
 import { LIABILITY_TYPES } from "./lib/accountTypes";
-import { formatCents, parseDollarsToCents } from "./lib/currency";
+import {
+  centsToDollarInput,
+  formatCents,
+  parseDollarsToCents,
+  useMasked,
+} from "./lib/currency";
 import { formatDate } from "./lib/dateFormat";
 
 interface ReconciliationWorkspaceProps {
@@ -31,6 +36,7 @@ function ReconciliationWorkspace({
   onClose,
   onCompleted,
 }: ReconciliationWorkspaceProps) {
+  useMasked();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [startDate, setStartDate] = useState(firstOfMonthIso());
   const [endDate, setEndDate] = useState(todayIso());
@@ -85,11 +91,7 @@ function ReconciliationWorkspace({
     if (!hint) return;
     if (hint.statement_start_date) setStartDate(hint.statement_start_date);
     if (hint.statement_end_date) setEndDate(hint.statement_end_date);
-    setBalanceInput(
-      (hint.statement_ending_balance_cents / 100)
-        .toFixed(2)
-        .replace("-0.00", "0.00"),
-    );
+    setBalanceInput(centsToDollarInput(hint.statement_ending_balance_cents));
     setHintDismissed(true);
   }
 
@@ -243,7 +245,7 @@ function ReconciliationWorkspace({
               >
                 <span className="reconcile-difference-label">Difference</span>
                 <span className="reconcile-difference-amount">
-                  {isBalanced ? "$0.00" : differenceLabel}
+                  {isBalanced ? formatCents(0) : differenceLabel}
                 </span>
                 {isBalanced ? (
                   <span className="reconcile-difference-status">

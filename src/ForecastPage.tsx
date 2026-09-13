@@ -6,12 +6,13 @@ import {
   type ForecastResult,
 } from "./api/midas";
 import { CASH_TYPES } from "./lib/accountTypes";
-import { formatCents } from "./lib/currency";
+import { formatCents, useMasked } from "./lib/currency";
 import { formatDate } from "./lib/dateFormat";
 
 const HORIZONS = [7, 14, 30] as const;
 
 function ForecastPage() {
+  useMasked();
   const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [selectedAccountId, setSelectedAccountId] = useState<
     number | "combined"
@@ -49,7 +50,7 @@ function ForecastPage() {
   if (error) {
     return (
       <section aria-labelledby="forecast-heading">
-        <div className="accounts-toolbar">
+        <div className="page-toolbar">
           <h1 id="forecast-heading">Forecast</h1>
         </div>
         <p className="form-error" role="alert">
@@ -62,7 +63,7 @@ function ForecastPage() {
   if (!accounts) {
     return (
       <section aria-labelledby="forecast-heading">
-        <div className="accounts-toolbar">
+        <div className="page-toolbar">
           <h1 id="forecast-heading">Forecast</h1>
         </div>
         <p className="muted">Loading…</p>
@@ -73,7 +74,7 @@ function ForecastPage() {
   if (accounts.length === 0) {
     return (
       <section aria-labelledby="forecast-heading">
-        <div className="accounts-toolbar">
+        <div className="page-toolbar">
           <h1 id="forecast-heading">Forecast</h1>
         </div>
         <p className="muted">
@@ -86,7 +87,7 @@ function ForecastPage() {
 
   return (
     <section aria-labelledby="forecast-heading">
-      <div className="accounts-toolbar">
+      <div className="page-toolbar">
         <h1 id="forecast-heading">Forecast</h1>
       </div>
       <p className="muted">
@@ -95,11 +96,7 @@ function ForecastPage() {
       </p>
 
       <div className="insights-period-nav">
-        <div
-          className="accounts-toolbar-actions"
-          role="group"
-          aria-label="Account"
-        >
+        <div className="page-toolbar-actions" role="group" aria-label="Account">
           <button
             type="button"
             aria-pressed={selectedAccountId === "combined"}

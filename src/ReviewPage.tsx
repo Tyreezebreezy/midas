@@ -18,6 +18,7 @@ import {
   signalsApi,
   transactionsApi,
 } from "./api/midas";
+import { formatCents, maskMoneyInText, useMasked } from "./lib/currency";
 import { formatDate } from "./lib/dateFormat";
 import TransactionForm from "./TransactionForm";
 
@@ -100,7 +101,7 @@ function AmbiguousMatchResolver({
           onClick={() => pick(c.id)}
         >
           This is {formatDate(c.expected_date)} ·{" "}
-          {Math.abs(c.expected_amount_cents / 100).toFixed(2)}
+          {formatCents(Math.abs(c.expected_amount_cents))}
         </button>
       ))}
     </div>
@@ -145,7 +146,7 @@ function ReviewItemCard({
       <p>
         <strong>{item.title}</strong>
       </p>
-      <p className="muted">{item.evidence}</p>
+      <p className="muted">{maskMoneyInText(item.evidence)}</p>
       {error && (
         <p className="form-error" role="alert">
           {error}
@@ -517,7 +518,7 @@ function SignalsTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
           <p>
             <strong>{s.title}</strong>
           </p>
-          <p className="muted">{s.evidence}</p>
+          <p className="muted">{maskMoneyInText(s.evidence)}</p>
           <div className="review-item-actions">
             <button
               type="button"
@@ -549,7 +550,7 @@ function HealthRow({
   lines: string[];
 }) {
   return (
-    <div className="data-health-row">
+    <div className="review-item data-health-row">
       <div className="review-item-header">
         <strong>{label}</strong>
         <span className={`badge-review badge-health-${state}`}>
@@ -639,11 +640,12 @@ function DataHealthTab() {
 }
 
 function ReviewPage({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
+  useMasked();
   const [tab, setTab] = useState<ReviewTab>("attention");
 
   return (
     <section aria-labelledby="review-heading">
-      <div className="accounts-toolbar">
+      <div className="page-toolbar">
         <h1 id="review-heading">Review</h1>
       </div>
 

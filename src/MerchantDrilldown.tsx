@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Transaction } from "./api/midas";
 import { transactionsApi } from "./api/midas";
-import { formatCents } from "./lib/currency";
+import { formatCents, useMasked } from "./lib/currency";
 import { formatDate } from "./lib/dateFormat";
 
 // Merchant Insights' own "see the real transactions" drilldown - the same
@@ -19,6 +19,7 @@ function MerchantDrilldown({
   from: string;
   to: string;
 }) {
+  useMasked();
   const [transactions, setTransactions] = useState<Transaction[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 

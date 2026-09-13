@@ -69,7 +69,7 @@ function CategoryCleanupPage() {
 
   return (
     <section aria-labelledby="category-cleanup-heading">
-      <h2 id="category-cleanup-heading">Clean up categories</h2>
+      <h3 id="category-cleanup-heading">Clean up categories</h3>
       <p className="muted">
         Rename a category everywhere it's used at once — on transactions, split
         parts, rules, and budgets. Use this to merge two categories by renaming

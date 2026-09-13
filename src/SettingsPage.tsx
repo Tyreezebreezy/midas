@@ -1,5 +1,6 @@
 import BackupPage from "./BackupPage";
 import CategoryCleanupPage from "./CategoryCleanupPage";
+import ImportProfilesSection from "./ImportProfilesSection";
 import PayCycleSettings from "./PayCycleSettings";
 import PayeesPage from "./PayeesPage";
 import RulesPage from "./RulesPage";
@@ -25,6 +26,26 @@ function SettingsPage({
       <h1>Settings</h1>
       <div className="settings-sections">
         <section
+          aria-labelledby="personalization-heading"
+          className="settings-section"
+        >
+          <h2 id="personalization-heading">Personalization</h2>
+          <div className="field">
+            <label htmlFor="display-name">Display name</label>
+            <input
+              id="display-name"
+              value={displayName}
+              onChange={(e) => onDisplayNameChange(e.target.value)}
+              placeholder="Optional"
+            />
+            <p className="field-hint">
+              Used only for a small greeting on Overview. Stored on this device
+              only.
+            </p>
+          </div>
+        </section>
+
+        <section
           aria-labelledby="appearance-heading"
           className="settings-section"
         >
@@ -47,26 +68,6 @@ function SettingsPage({
         </section>
 
         <section
-          aria-labelledby="personalization-heading"
-          className="settings-section"
-        >
-          <h2 id="personalization-heading">Personalization</h2>
-          <div className="field">
-            <label htmlFor="display-name">Display name</label>
-            <input
-              id="display-name"
-              value={displayName}
-              onChange={(e) => onDisplayNameChange(e.target.value)}
-              placeholder="Optional"
-            />
-            <p className="field-hint">
-              Used only for a small greeting on Overview. Stored on this device
-              only.
-            </p>
-          </div>
-        </section>
-
-        <section
           aria-labelledby="financial-heading"
           className="settings-section"
         >
@@ -76,22 +77,12 @@ function SettingsPage({
         </section>
 
         <div className="settings-section">
+          <h2 className="settings-group-heading">Rules &amp; Data</h2>
           <PayeesPage />
-        </div>
-
-        <div className="settings-section">
           <TagsPage />
-        </div>
-
-        <div className="settings-section">
           <CategoryCleanupPage />
-        </div>
-
-        <div className="settings-section">
           <RulesPage />
-        </div>
-
-        <div className="settings-section">
+          <ImportProfilesSection />
           <BackupPage />
         </div>
 

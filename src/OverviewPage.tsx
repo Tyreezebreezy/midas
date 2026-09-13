@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { Tab } from "./App";
 import type { OverviewResult } from "./api/midas";
 import { overviewApi } from "./api/midas";
-import { formatCents } from "./lib/currency";
+import { formatCents, useMasked } from "./lib/currency";
 import { formatDate } from "./lib/dateFormat";
 import { SCHEDULE_TYPE_LABELS } from "./PayCycleSettings";
 import { TRANSACTION_TYPE_LABELS } from "./lib/transactionTypes";
@@ -21,6 +21,7 @@ function OverviewPage({
   onNavigate: (tab: Tab) => void;
   displayName: string;
 }) {
+  useMasked();
   const [overview, setOverview] = useState<OverviewResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -68,7 +69,13 @@ function OverviewPage({
         <h2>Safe to spend</h2>
         {sts.status === "complete" ? (
           <>
-            <p className="hero-number">
+            <p
+              className={
+                sts.safe_to_spend_cents < 0
+                  ? "hero-number hero-number-negative"
+                  : "hero-number"
+              }
+            >
               {formatCents(sts.safe_to_spend_cents)}
             </p>
             <p className="muted">
@@ -127,7 +134,13 @@ function OverviewPage({
           </>
         ) : (
           <>
-            <p className="hero-number">
+            <p
+              className={
+                sts.eligible_cash_cents < 0
+                  ? "hero-number hero-number-negative"
+                  : "hero-number"
+              }
+            >
               {formatCents(sts.eligible_cash_cents)}
             </p>
             <p className="muted">Eligible cash - no pay schedule set yet</p>

@@ -94,7 +94,9 @@ function RuleForm({
         </div>
 
         <div className="field">
-          <label htmlFor="rule-match-value">Match text</label>
+          <label htmlFor="rule-match-value" className="field-required">
+            Match text
+          </label>
           <input
             id="rule-match-value"
             value={matchValue}
@@ -230,8 +232,8 @@ function RulesPage() {
 
   return (
     <section aria-labelledby="rules-heading">
-      <div className="accounts-toolbar">
-        <h2 id="rules-heading">Rules</h2>
+      <div className="page-toolbar">
+        <h3 id="rules-heading">Rules</h3>
         <button
           type="button"
           className="btn-primary"
@@ -288,7 +290,7 @@ function RulesPage() {
                   <td className="col-actions">
                     <button
                       type="button"
-                      className="btn-link"
+                      className="btn-link btn-link-danger"
                       onClick={() => handleDelete(rule.id)}
                     >
                       Delete

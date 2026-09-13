@@ -14,6 +14,7 @@ import {
   centsToDollarInput,
   formatCents,
   parseDollarsToCents,
+  useMasked,
 } from "./lib/currency";
 import {
   currentMonthValue,
@@ -180,7 +181,9 @@ function BudgetForm({
         <h2 id="budget-form-title">{budget ? "Edit budget" : "Add budget"}</h2>
 
         <div className="field">
-          <label htmlFor="budget-category">Category</label>
+          <label htmlFor="budget-category" className="field-required">
+            Category
+          </label>
           <input
             id="budget-category"
             list="budget-category-options"
@@ -197,7 +200,9 @@ function BudgetForm({
         </div>
 
         <div className="field">
-          <label htmlFor="budget-month">Month</label>
+          <label htmlFor="budget-month" className="field-required">
+            Month
+          </label>
           <input
             id="budget-month"
             type="month"
@@ -346,7 +351,11 @@ function BudgetCard({
         <button type="button" className="btn-link" onClick={onEdit}>
           Edit
         </button>
-        <button type="button" className="btn-link" onClick={onDelete}>
+        <button
+          type="button"
+          className="btn-link btn-link-danger"
+          onClick={onDelete}
+        >
           Delete
         </button>
         <button type="button" className="btn-link" onClick={onToggleExpanded}>
@@ -362,6 +371,7 @@ function BudgetCard({
 }
 
 function BudgetsPage() {
+  useMasked();
   const [monthValue, setMonthValue] = useState(currentMonthValue);
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [previousMonthBudgets, setPreviousMonthBudgets] = useState<Budget[]>(
@@ -525,9 +535,9 @@ function BudgetsPage() {
 
   return (
     <section aria-labelledby="budgets-heading">
-      <div className="accounts-toolbar">
+      <div className="page-toolbar">
         <h1 id="budgets-heading">Budgets</h1>
-        <div className="accounts-toolbar-actions">
+        <div className="page-toolbar-actions">
           <button
             type="button"
             className="btn-secondary"

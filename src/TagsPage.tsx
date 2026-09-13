@@ -53,7 +53,7 @@ function TagsPage() {
 
   return (
     <section aria-labelledby="tags-heading">
-      <h2 id="tags-heading">Tags</h2>
+      <h3 id="tags-heading">Tags</h3>
       <p className="muted">
         Tags are lightweight labels you can attach to any transaction — use them
         for things that cut across categories, like a trip or a project.
@@ -91,7 +91,7 @@ function TagsPage() {
               <span>{tag.name}</span>
               <button
                 type="button"
-                className="btn-link"
+                className="btn-link btn-link-danger"
                 onClick={() => handleDelete(tag)}
               >
                 Delete

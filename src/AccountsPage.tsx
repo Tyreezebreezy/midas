@@ -6,9 +6,10 @@ import ReconcileBalanceForm from "./ReconcileBalanceForm";
 import ReconciliationHistoryDialog from "./ReconciliationHistoryDialog";
 import ReconciliationWorkspace from "./ReconciliationWorkspace";
 import { ACCOUNT_TYPE_LABELS, LIABILITY_TYPES } from "./lib/accountTypes";
-import { formatCents } from "./lib/currency";
+import { formatCents, useMasked } from "./lib/currency";
 
 function AccountsPage() {
+  useMasked();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [showArchived, setShowArchived] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -50,9 +51,9 @@ function AccountsPage() {
 
   return (
     <section aria-labelledby="accounts-heading" className="accounts-page">
-      <div className="accounts-toolbar">
+      <div className="page-toolbar">
         <h1 id="accounts-heading">Accounts</h1>
-        <div className="accounts-toolbar-actions">
+        <div className="page-toolbar-actions">
           <label className="show-archived-toggle">
             <input
               type="checkbox"
@@ -80,11 +81,24 @@ function AccountsPage() {
       {loading ? (
         <p className="muted">Loading accounts…</p>
       ) : accounts.length === 0 ? (
-        <p className="muted">
-          {showArchived
-            ? "No accounts yet."
-            : "No active accounts yet. Add your first account to get started."}
-        </p>
+        <div className="empty-state">
+          <h2>{showArchived ? "No accounts yet." : "No accounts yet"}</h2>
+          {!showArchived && (
+            <>
+              <p className="muted">
+                Add your first account to start tracking balances and
+                transactions.
+              </p>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => setEditing("new")}
+              >
+                Add account
+              </button>
+            </>
+          )}
+        </div>
       ) : (
         <div className="table-scroll">
           <table className="accounts-table">

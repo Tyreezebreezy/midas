@@ -4,7 +4,7 @@
 // per the project's own established direction.
 
 import type { CategoryTotal } from "./api/midas";
-import { formatCents } from "./lib/currency";
+import { formatCents, useMasked } from "./lib/currency";
 
 const CHART_COLORS = [
   "var(--chart-1)",
@@ -66,6 +66,7 @@ function CategoryDonut({
   onSelect: (category: string) => void;
   centerLabel?: string;
 }) {
+  useMasked();
   const size = 180;
   const strokeWidth = 30;
   const radius = (size - strokeWidth) / 2;

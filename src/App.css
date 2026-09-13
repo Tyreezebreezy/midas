@@ -150,8 +150,21 @@ input {
 }
 
 .sidebar-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
   padding-top: 0.75rem;
   border-top: 1px solid var(--midas-border);
+}
+
+.privacy-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.privacy-toggle[aria-pressed="true"] {
+  color: var(--midas-gold);
 }
 
 .main-column {
@@ -240,6 +253,27 @@ h2 {
   letter-spacing: -0.01em;
 }
 
+h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+h4 {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.settings-group-heading {
+  margin: 0 0 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--midas-gold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
 .section-heading {
   margin: 2rem 0 1rem;
   font-size: 1.05rem;
@@ -259,6 +293,7 @@ h2 {
   font-size: 2.5rem;
   font-weight: 700;
   margin: 1rem 0;
+  font-variant-numeric: tabular-nums;
 }
 
 .goal-progress-track {
@@ -289,9 +324,13 @@ h2 {
   white-space: nowrap;
 }
 
-/* Accounts page */
+/* Page header - the one toolbar shape every major page and Settings
+   sub-section uses: title on the left, primary/secondary controls on the
+   right, wrapping to a stacked layout on narrow widths. Named generically
+   (not after any one page) since Transactions/Insights/Recurring/Budgets/
+   Goals/Review/Forecast/Payees/Tags/Rules all reuse it verbatim. */
 
-.accounts-toolbar {
+.page-toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -300,12 +339,19 @@ h2 {
   margin-bottom: 1.75rem;
 }
 
-.accounts-toolbar-actions {
+.page-toolbar-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 1.25rem;
 }
+
+.page-description {
+  margin: -1rem 0 1.5rem;
+  color: var(--midas-text-muted);
+}
+
+/* Accounts page */
 
 .show-archived-toggle {
   display: flex;
@@ -360,7 +406,8 @@ h2 {
   opacity: 0.65;
 }
 
-.badge-archived {
+.badge-archived,
+.badge-neutral {
   margin-left: 0.5rem;
   padding: 0.1rem 0.5rem;
   border-radius: 999px;
@@ -370,6 +417,12 @@ h2 {
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
+
+/* .badge-archived means literally "archived" everywhere it's used
+   (Accounts/Payees/Transactions/Recurring row dimming). .badge-neutral is
+   the same neutral pill for everything else that isn't archived-ness -
+   "Split," "One-time," "Merged," "Duplicate" - so a reader doesn't have to
+   wonder whether an Amazon transaction tagged "Split" is somehow archived. */
 
 .amount-owed {
   color: var(--midas-negative);
@@ -419,6 +472,35 @@ h2 {
   margin-left: 0.5rem;
 }
 
+/* Destructive actions (delete, undo import, reopen reconciliation, restore
+   backup) get their own quiet-until-touched treatment - visually a
+   secondary button at rest so a row of actions doesn't read as alarming,
+   but unmistakably different from a harmless Edit/View link next to it. */
+
+.btn-danger {
+  padding: 0.6rem 1.15rem;
+  border: 1px solid var(--midas-negative);
+  background: transparent;
+  color: var(--midas-negative);
+  font-weight: 600;
+}
+
+.btn-danger:hover,
+.btn-danger:focus-visible {
+  color: var(--midas-bg);
+  background: var(--midas-negative);
+}
+
+.btn-link.btn-link-danger {
+  color: var(--midas-negative);
+}
+
+.btn-link.btn-link-danger:hover,
+.btn-link.btn-link-danger:focus-visible {
+  color: var(--midas-negative);
+  text-decoration: underline;
+}
+
 /* Account dialog / form */
 
 .account-dialog {
@@ -450,6 +532,11 @@ h2 {
   font-size: 0.85rem;
   font-weight: 600;
   color: var(--midas-text-muted);
+}
+
+.field-required::after {
+  content: " *";
+  color: var(--midas-gold);
 }
 
 .field input,
@@ -600,25 +687,34 @@ footer {
   margin-bottom: 1.25rem;
 }
 
+/* Shared empty-state shape (heading + short explanation + an optional
+   primary action) - used on every list/report page with nothing to show
+   yet, so "you have no X" reads the same everywhere in the app. */
+
+.empty-state,
 .review-empty-state {
   padding: 2rem 0;
   text-align: center;
 }
 
+.empty-state h2,
 .review-empty-state h2 {
   margin-bottom: 0.4rem;
+}
+
+.empty-state p {
+  margin: 0 0 1rem;
+}
+
+.empty-state .btn-primary,
+.empty-state .btn-secondary {
+  margin: 0 0.35rem;
 }
 
 .data-health-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
   gap: 1.25rem;
-}
-
-.data-health-row {
-  padding: 1rem 1.1rem;
-  background: var(--midas-surface);
-  border-radius: 0.6rem;
 }
 
 .data-health-row .review-item-header {
@@ -649,6 +745,12 @@ footer {
 
 .import-dialog {
   width: min(46rem, 94vw);
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+.import-history-dialog {
+  width: min(36rem, 92vw);
   max-height: 85vh;
   overflow-y: auto;
 }
@@ -794,6 +896,7 @@ footer {
 .reconcile-difference-amount {
   font-size: 2.25rem;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
   color: var(--midas-negative);
 }
 
@@ -916,7 +1019,14 @@ footer {
   margin: 0.25rem 0;
   font-size: clamp(2.75rem, 5vw, 3.5rem);
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
   color: var(--midas-gold);
+}
+
+/* A negative Safe to Spend means the user is effectively overcommitted -
+   the gold "everything is fine" treatment must not apply to it. */
+.hero-number-negative {
+  color: var(--midas-negative);
 }
 
 .hero-summary-line {
@@ -972,6 +1082,7 @@ footer {
   margin: 0;
   font-size: 1.15rem;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 .overview-grid {
@@ -1486,35 +1597,6 @@ footer {
 
 /* Recurring */
 
-.recurring-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  margin: 1.25rem 0 1rem;
-}
-
-.recurring-tab {
-  padding: 0.45rem 0.9rem;
-  border: 1px solid var(--midas-border);
-  border-radius: 999px;
-  background: var(--midas-surface);
-  color: var(--midas-text-muted);
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.recurring-tab:hover,
-.recurring-tab:focus-visible {
-  color: var(--midas-text);
-}
-
-.recurring-tab-active {
-  border-color: var(--midas-gold);
-  color: var(--midas-bg-deep);
-  background: var(--midas-gold);
-}
-
 .calendar-nav {
   display: flex;
   align-items: center;
@@ -1561,6 +1643,57 @@ footer {
 .pattern-lifecycle {
   padding-top: 0.75rem;
   border-top: 1px solid var(--midas-border);
+}
+
+/* First-run onboarding (Batch 10) */
+
+.onboarding-shell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 2rem;
+  background: var(--midas-bg);
+}
+
+.onboarding-card {
+  width: min(30rem, 100%);
+  padding: 2.5rem;
+  border: 1px solid var(--midas-border);
+  border-radius: 1rem;
+  background: var(--midas-surface-raised);
+}
+
+.onboarding-card h1 {
+  margin-bottom: 0.75rem;
+}
+
+.onboarding-card p {
+  margin: 0.5rem 0;
+}
+
+.onboarding-list {
+  margin: 0.75rem 0;
+  padding-left: 1.25rem;
+  color: var(--midas-text-muted);
+}
+
+.onboarding-list li {
+  margin: 0.35rem 0;
+}
+
+.onboarding-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 1.75rem;
+}
+
+.onboarding-actions .btn-link {
+  margin-right: auto;
 }
 
 @media (max-width: 640px) {
@@ -1611,20 +1744,14 @@ footer {
     min-width: 0;
   }
 
-  .accounts-toolbar {
+  .page-toolbar {
     align-items: flex-start;
     flex-direction: column;
   }
 
-  .accounts-toolbar-actions {
+  .page-toolbar-actions {
     align-self: stretch;
     justify-content: space-between;
-  }
-
-  .recurring-tabs {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    padding-bottom: 0.25rem;
   }
 
   .calendar-nav {

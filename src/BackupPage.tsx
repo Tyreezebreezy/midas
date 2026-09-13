@@ -126,7 +126,7 @@ function BackupPage() {
 
   return (
     <section aria-labelledby="backup-heading">
-      <h2 id="backup-heading">Backup &amp; Restore</h2>
+      <h3 id="backup-heading">Backup &amp; Restore</h3>
 
       {error && (
         <p className="form-error" role="alert">
@@ -134,7 +134,7 @@ function BackupPage() {
         </p>
       )}
 
-      <h2 className="section-heading">Backup</h2>
+      <h4 className="section-heading">Backup</h4>
       <p className="muted">
         Downloads a complete copy of your MIDAS database - accounts,
         transactions, budgets, everything. Keep it somewhere safe; it's
@@ -155,7 +155,7 @@ function BackupPage() {
         </p>
       )}
 
-      <h2 className="section-heading">Export transactions (CSV)</h2>
+      <h4 className="section-heading">Export transactions (CSV)</h4>
       <p className="muted">
         A plain spreadsheet of every transaction - readable in Excel or Google
         Sheets, with or without MIDAS installed.
@@ -169,7 +169,7 @@ function BackupPage() {
         Export CSV
       </button>
 
-      <h2 className="section-heading">Restore from backup</h2>
+      <h4 className="section-heading">Restore from backup</h4>
       <p className="muted">
         Choose a MIDAS backup file. Nothing changes until you review what's in
         it and explicitly confirm - and your current database is always
@@ -211,7 +211,7 @@ function BackupPage() {
             </button>
             <button
               type="button"
-              className="btn-primary"
+              className="btn-danger"
               onClick={handleConfirmRestore}
               disabled={busy}
             >

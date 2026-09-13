@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Account } from "./api/midas";
 import { accountingApi } from "./api/midas";
 import { LIABILITY_TYPES } from "./lib/accountTypes";
-import { formatCents, parseDollarsToCents } from "./lib/currency";
+import { formatCents, parseDollarsToCents, useMasked } from "./lib/currency";
 
 interface ReconcileBalanceFormProps {
   account: Account;
@@ -15,6 +15,7 @@ function ReconcileBalanceForm({
   onClose,
   onSaved,
 }: ReconcileBalanceFormProps) {
+  useMasked();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [balanceInput, setBalanceInput] = useState("");
   const [error, setError] = useState<string | null>(null);

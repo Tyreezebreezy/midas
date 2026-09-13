@@ -16,7 +16,7 @@ import {
   type PayeeTotal,
   type SpendingInsights,
 } from "./api/midas";
-import { formatCents } from "./lib/currency";
+import { formatCents, useMasked } from "./lib/currency";
 import {
   currentPeriodValue,
   periodComparison,
@@ -148,7 +148,7 @@ function PeriodNav({
   const isCurrent = value === currentPeriodValue(mode);
   return (
     <div className="insights-period-nav">
-      <div className="accounts-toolbar-actions">
+      <div className="page-toolbar-actions">
         <button
           type="button"
           className="btn-secondary"
@@ -889,6 +889,7 @@ function NetWorthTab({
 // ---------- Page shell ----------
 
 function InsightsPage() {
+  useMasked();
   const [tab, setTab] = useState<InsightsTab>("spending");
   const [mode, setMode] = useState<PeriodMode>("month");
   const [value, setValue] = useState(() => currentPeriodValue("month"));
@@ -908,7 +909,7 @@ function InsightsPage() {
 
   return (
     <section aria-labelledby="insights-heading">
-      <div className="accounts-toolbar">
+      <div className="page-toolbar">
         <h1 id="insights-heading">Insights</h1>
       </div>
 

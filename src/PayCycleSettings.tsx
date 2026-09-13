@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { CycleSummary, PaySchedule, RecurringSeries } from "./api/midas";
 import { payCycleApi } from "./api/midas";
-import { formatCents } from "./lib/currency";
+import { formatCents, useMasked } from "./lib/currency";
 import { formatDate } from "./lib/dateFormat";
 
 export const SCHEDULE_TYPE_LABELS: Record<
@@ -227,6 +227,7 @@ function ScheduleForm({
 }
 
 function PayCycleSettings() {
+  useMasked();
   const [summary, setSummary] = useState<CycleSummary | null>(null);
   const [suggestions, setSuggestions] = useState<RecurringSeries[]>([]);
   const [loading, setLoading] = useState(true);

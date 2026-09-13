@@ -338,7 +338,9 @@ function TransactionForm({
         </div>
 
         <div className="field">
-          <label htmlFor="txn-date">Date</label>
+          <label htmlFor="txn-date" className="field-required">
+            Date
+          </label>
           <input
             id="txn-date"
             type="date"
@@ -404,7 +406,9 @@ function TransactionForm({
         </div>
 
         <div className="field">
-          <label htmlFor="txn-description">Merchant / description</label>
+          <label htmlFor="txn-description" className="field-required">
+            Merchant / description
+          </label>
           <input
             id="txn-description"
             value={description}

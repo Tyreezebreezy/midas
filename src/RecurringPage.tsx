@@ -10,7 +10,7 @@ import type {
 import { accountsApi, recurringApi } from "./api/midas";
 import { CADENCE_LABELS } from "./RecurringPatternEditor";
 import RecurringPatternEditor from "./RecurringPatternEditor";
-import { formatCents } from "./lib/currency";
+import { formatCents, useMasked } from "./lib/currency";
 import { formatDate } from "./lib/dateFormat";
 
 type View = "upcoming" | "subscriptions" | "bills" | "income" | "calendar";
@@ -372,6 +372,7 @@ function ProposedCard({
 }
 
 function RecurringPage({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
+  useMasked();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [accountFilter, setAccountFilter] = useState<number | "">("");
   const [allSeries, setAllSeries] = useState<RecurringSeries[]>([]);
@@ -604,9 +605,9 @@ function RecurringPage({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
 
   return (
     <section aria-labelledby="recurring-heading">
-      <div className="accounts-toolbar">
+      <div className="page-toolbar">
         <h1 id="recurring-heading">Recurring</h1>
-        <div className="accounts-toolbar-actions">
+        <div className="page-toolbar-actions">
           <select
             value={accountFilter}
             onChange={(e) =>
@@ -666,16 +667,21 @@ function RecurringPage({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
         </>
       )}
 
-      <div className="recurring-tabs" role="group" aria-label="Recurring views">
+      <div
+        className="insights-tabs"
+        role="tablist"
+        aria-label="Recurring views"
+      >
         {(Object.keys(VIEW_LABELS) as View[]).map((v) => (
           <button
             key={v}
             type="button"
-            aria-pressed={view === v}
+            role="tab"
+            aria-selected={view === v}
             className={
               view === v
-                ? "recurring-tab recurring-tab-active"
-                : "recurring-tab"
+                ? "insights-tab-button insights-tab-button-active"
+                : "insights-tab-button"
             }
             onClick={() => setView(v)}
           >

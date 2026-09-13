@@ -68,7 +68,9 @@ function PayeeForm({
         <h2 id="payee-form-title">{payee ? "Edit payee" : "Add payee"}</h2>
 
         <div className="field">
-          <label htmlFor="payee-name">Name</label>
+          <label htmlFor="payee-name" className="field-required">
+            Name
+          </label>
           <input
             id="payee-name"
             value={name}
@@ -263,9 +265,9 @@ function PayeesPage() {
 
   return (
     <section aria-labelledby="payees-heading">
-      <div className="accounts-toolbar">
-        <h2 id="payees-heading">Payees</h2>
-        <div className="accounts-toolbar-actions">
+      <div className="page-toolbar">
+        <h3 id="payees-heading">Payees</h3>
+        <div className="page-toolbar-actions">
           <label className="show-archived-toggle">
             <input
               type="checkbox"

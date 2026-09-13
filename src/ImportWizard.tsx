@@ -9,7 +9,7 @@ import type {
   StagingResult,
 } from "./api/midas";
 import { importApi, importProfilesApi, ofxApi } from "./api/midas";
-import { formatCents } from "./lib/currency";
+import { formatCents, useMasked } from "./lib/currency";
 import { formatDate } from "./lib/dateFormat";
 
 interface ImportWizardProps {
@@ -77,6 +77,7 @@ function ImportWizard({
   onImported,
   onReviewNeeded,
 }: ImportWizardProps) {
+  useMasked();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [sourceKind, setSourceKind] = useState<SourceKind>("csv");

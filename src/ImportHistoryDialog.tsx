@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ImportRecord, Transaction, UndoPreview } from "./api/midas";
 import { importHistoryApi, transactionsApi } from "./api/midas";
-import { formatCents } from "./lib/currency";
+import { formatCents, useMasked } from "./lib/currency";
 import { formatDate } from "./lib/dateFormat";
 
 interface ImportHistoryDialogProps {
@@ -9,6 +9,7 @@ interface ImportHistoryDialogProps {
 }
 
 function ImportHistoryDialog({ onClose }: ImportHistoryDialogProps) {
+  useMasked();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [records, setRecords] = useState<ImportRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -248,7 +249,7 @@ function ImportHistoryDialog({ onClose }: ImportHistoryDialogProps) {
               (confirmingUndo ? (
                 <button
                   type="button"
-                  className="btn-primary"
+                  className="btn-danger"
                   onClick={confirmUndo}
                   disabled={busy}
                 >
@@ -257,7 +258,7 @@ function ImportHistoryDialog({ onClose }: ImportHistoryDialogProps) {
               ) : (
                 <button
                   type="button"
-                  className="btn-secondary"
+                  className="btn-danger"
                   onClick={startUndo}
                   disabled={busy}
                 >

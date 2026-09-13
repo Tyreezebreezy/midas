@@ -2,7 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import type { Split, Transaction } from "./api/midas";
 import { splitsApi } from "./api/midas";
 import { SUGGESTED_CATEGORIES } from "./lib/categories";
-import { formatCents, parseDollarsToCents } from "./lib/currency";
+import {
+  centsToDollarInput,
+  formatCents,
+  parseDollarsToCents,
+  useMasked,
+} from "./lib/currency";
 
 interface SplitEditorProps {
   transaction: Transaction;
@@ -22,7 +27,7 @@ function rowFromSplit(s: Split): SplitRow {
   return {
     key: nextKey++,
     category: s.category ?? "",
-    amountInput: (Math.abs(s.amount_cents) / 100).toFixed(2),
+    amountInput: centsToDollarInput(Math.abs(s.amount_cents)),
   };
 }
 
@@ -45,6 +50,7 @@ function magnitudeCents(amountInput: string): number {
  * account, or balance.
  */
 function SplitEditor({ transaction, onClose, onSaved }: SplitEditorProps) {
+  useMasked();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [rows, setRows] = useState<SplitRow[]>([]);
   const [loading, setLoading] = useState(true);

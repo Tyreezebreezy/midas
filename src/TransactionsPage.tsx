@@ -26,7 +26,7 @@ import ReconciledEditWarning from "./ReconciledEditWarning";
 import TransactionDetails from "./TransactionDetails";
 import TransactionForm from "./TransactionForm";
 import { SUGGESTED_CATEGORIES } from "./lib/categories";
-import { formatCents } from "./lib/currency";
+import { formatCents, useMasked } from "./lib/currency";
 import { formatDate } from "./lib/dateFormat";
 import { TRANSACTION_TYPE_LABELS } from "./lib/transactionTypes";
 
@@ -45,6 +45,7 @@ type BulkAction =
   | "archive";
 
 function TransactionsPage({ onNavigate }: TransactionsPageProps) {
+  useMasked();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [payees, setPayees] = useState<Payee[]>([]);
   const [allTags, setAllTags] = useState<Tag[]>([]);
@@ -293,9 +294,9 @@ function TransactionsPage({ onNavigate }: TransactionsPageProps) {
 
   return (
     <section aria-labelledby="transactions-heading">
-      <div className="accounts-toolbar">
+      <div className="page-toolbar">
         <h1 id="transactions-heading">Transactions</h1>
-        <div className="accounts-toolbar-actions">
+        <div className="page-toolbar-actions">
           <button
             type="button"
             className="btn-secondary"
@@ -561,7 +562,44 @@ function TransactionsPage({ onNavigate }: TransactionsPageProps) {
       {loading ? (
         <p className="muted">Loading transactions…</p>
       ) : transactions.length === 0 ? (
-        <p className="muted">No transactions match these filters.</p>
+        <div className="empty-state">
+          {accounts.length === 0 ? (
+            <>
+              <h2>No accounts yet</h2>
+              <p className="muted">
+                Create the account in MIDAS before adding or importing its
+                transactions.
+              </p>
+            </>
+          ) : search ||
+            accountId !== "" ||
+            category ||
+            dateFrom ||
+            dateTo ||
+            payeeFilter !== "" ||
+            tagFilter !== "" ||
+            reconciliationFilter !== "" ||
+            oneTimeFilter !== "" ? (
+            <>
+              <h2>No matching transactions</h2>
+              <p className="muted">
+                No transactions match these filters. Try clearing one or more.
+              </p>
+            </>
+          ) : (
+            <>
+              <h2>No transactions yet</h2>
+              <p className="muted">Add one manually or import a statement.</p>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => setEditing("new")}
+              >
+                Add transaction
+              </button>
+            </>
+          )}
+        </div>
       ) : (
         <div className="table-scroll">
           <table className="accounts-table">
@@ -576,10 +614,7 @@ function TransactionsPage({ onNavigate }: TransactionsPageProps) {
                   />
                 </th>
                 <th scope="col">Date</th>
-                <th scope="col">Account</th>
                 <th scope="col">Merchant</th>
-                <th scope="col">Category</th>
-                <th scope="col">Type</th>
                 <th scope="col" className="col-balance">
                   Amount
                 </th>
@@ -588,6 +623,8 @@ function TransactionsPage({ onNavigate }: TransactionsPageProps) {
                     Running balance
                   </th>
                 )}
+                <th scope="col">Category</th>
+                <th scope="col">Account</th>
                 <th scope="col">
                   <span className="sr-only">Status</span>
                 </th>
@@ -611,7 +648,6 @@ function TransactionsPage({ onNavigate }: TransactionsPageProps) {
                     />
                   </td>
                   <td>{formatDate(t.transaction_date)}</td>
-                  <td>{accountName(t.account_id)}</td>
                   <td
                     title={
                       t.merchant !== t.raw_description
@@ -621,16 +657,6 @@ function TransactionsPage({ onNavigate }: TransactionsPageProps) {
                   >
                     {t.merchant}
                   </td>
-                  <td>
-                    {t.has_splits ? (
-                      <span className="muted">Split</span>
-                    ) : (
-                      (t.category ?? (
-                        <span className="muted">Uncategorized</span>
-                      ))
-                    )}
-                  </td>
-                  <td>{TRANSACTION_TYPE_LABELS[t.transaction_type]}</td>
                   <td className="col-balance">
                     <span
                       className={
@@ -648,14 +674,29 @@ function TransactionsPage({ onNavigate }: TransactionsPageProps) {
                     </td>
                   )}
                   <td>
+                    {t.has_splits ? (
+                      <span className="muted">Split</span>
+                    ) : (
+                      (t.category ?? (
+                        <span className="muted">Uncategorized</span>
+                      ))
+                    )}
+                  </td>
+                  <td>{accountName(t.account_id)}</td>
+                  <td>
+                    {t.transaction_type !== "purchase" && (
+                      <span className="badge-neutral">
+                        {TRANSACTION_TYPE_LABELS[t.transaction_type]}
+                      </span>
+                    )}
                     {t.needs_review && (
                       <span className="badge-review">Needs review</span>
                     )}
                     {t.is_one_time && (
-                      <span className="badge-archived">One-time</span>
+                      <span className="badge-neutral">One-time</span>
                     )}
                     {t.has_splits && (
-                      <span className="badge-archived">Split</span>
+                      <span className="badge-neutral">Split</span>
                     )}
                     {t.is_archived && (
                       <span className="badge-archived">Archived</span>

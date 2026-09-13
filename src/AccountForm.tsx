@@ -12,7 +12,7 @@ import { parseDollarsToCents } from "./lib/currency";
 interface AccountFormProps {
   account: Account | null;
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (savedAccount: Account) => void;
 }
 
 function AccountForm({ account, onClose, onSaved }: AccountFormProps) {
@@ -61,8 +61,9 @@ function AccountForm({ account, onClose, onSaved }: AccountFormProps) {
     setSaving(true);
     setError(null);
     try {
+      let saved: Account;
       if (account) {
-        await accountsApi.update(account.id, input);
+        saved = await accountsApi.update(account.id, input);
       } else {
         const created = await accountsApi.create(input);
         if (startingBalanceCents !== 0) {
@@ -72,8 +73,9 @@ function AccountForm({ account, onClose, onSaved }: AccountFormProps) {
             new Date().toISOString().slice(0, 10),
           );
         }
+        saved = created;
       }
-      onSaved();
+      onSaved(saved);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -94,7 +96,9 @@ function AccountForm({ account, onClose, onSaved }: AccountFormProps) {
         </h2>
 
         <div className="field">
-          <label htmlFor="account-name">Name</label>
+          <label htmlFor="account-name" className="field-required">
+            Name
+          </label>
           <input
             id="account-name"
             value={name}
