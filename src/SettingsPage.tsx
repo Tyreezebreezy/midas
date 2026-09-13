@@ -1,7 +1,10 @@
 import BackupPage from "./BackupPage";
+import CategoryCleanupPage from "./CategoryCleanupPage";
 import PayCycleSettings from "./PayCycleSettings";
+import PayeesPage from "./PayeesPage";
 import RulesPage from "./RulesPage";
 import SafeToSpendReserveForm from "./SafeToSpendReserveForm";
+import TagsPage from "./TagsPage";
 import type { ThemePreference } from "./theme";
 
 const themeOptions: ThemePreference[] = ["system", "light", "dark"];
@@ -71,6 +74,18 @@ function SettingsPage({
           <PayCycleSettings />
           <SafeToSpendReserveForm />
         </section>
+
+        <div className="settings-section">
+          <PayeesPage />
+        </div>
+
+        <div className="settings-section">
+          <TagsPage />
+        </div>
+
+        <div className="settings-section">
+          <CategoryCleanupPage />
+        </div>
 
         <div className="settings-section">
           <RulesPage />

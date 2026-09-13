@@ -71,6 +71,9 @@ export interface Transaction {
   external_transaction_id: string | null;
   reconciliation_status: ReconciliationStatus;
   reconciliation_id: number | null;
+  payee_id: number | null;
+  is_one_time: boolean;
+  has_splits: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -90,6 +93,8 @@ export interface TransactionInput {
   notes: string | null;
   tags: string | null;
   is_pending: boolean | null;
+  payee_id: number | null;
+  is_one_time: boolean;
 }
 
 export interface TransactionFilter {
@@ -101,6 +106,10 @@ export interface TransactionFilter {
   include_archived?: boolean;
   needs_review_only?: boolean;
   source_import_id?: number | null;
+  payee_id?: number | null;
+  tag_id?: number | null;
+  reconciliation_status?: ReconciliationStatus | null;
+  is_one_time?: boolean | null;
 }
 
 export const transactionsApi = {
@@ -413,7 +422,17 @@ export const rulesApi = {
   create: (input: MerchantRuleInput) =>
     invoke<MerchantRule>("create_rule", { input }),
   delete: (id: number) => invoke<void>("delete_rule", { id }),
+  applyCorrection: (ruleInput: MerchantRuleInput, scope: CorrectionScope) =>
+    invoke<CorrectionResult>("apply_correction_command", { ruleInput, scope }),
 };
+
+// --- Correction-to-rule workflow (Transaction Intelligence, specs/phase-012) ---
+export type CorrectionScope = "future_only" | "past_only" | "past_and_future";
+
+export interface CorrectionResult {
+  rule: MerchantRule | null;
+  past_transactions_updated: number;
+}
 
 // --- Recurring series / bills ---
 export type Cadence =
@@ -764,4 +783,116 @@ export const reconciliationApi = {
     invoke<StatementHint | null>("get_latest_statement_hint", { accountId }),
   getRunningBalances: (accountId: number) =>
     invoke<RunningBalanceRow[]>("get_running_balances", { accountId }),
+};
+
+// --- Payee Library (Transaction Intelligence, specs/phase-012) ---
+export type PayeeType = "merchant" | "company" | "person";
+
+export interface Payee {
+  id: number;
+  name: string;
+  payee_type: PayeeType;
+  notes: string | null;
+  is_archived: boolean;
+  merged_into_payee_id: number | null;
+  transaction_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PayeeInput {
+  name: string;
+  payee_type: PayeeType;
+  notes: string | null;
+}
+
+export const payeesApi = {
+  list: (includeArchived: boolean) =>
+    invoke<Payee[]>("list_payees", { includeArchived }),
+  create: (input: PayeeInput) => invoke<Payee>("create_payee", { input }),
+  update: (id: number, input: PayeeInput) =>
+    invoke<Payee>("update_payee", { id, input }),
+  setArchived: (id: number, archived: boolean) =>
+    invoke<Payee>("set_payee_archived", { id, archived }),
+  merge: (sourceId: number, targetId: number) =>
+    invoke<Payee>("merge_payees", { sourceId, targetId }),
+};
+
+// --- Tags (Transaction Intelligence, specs/phase-012) ---
+export interface Tag {
+  id: number;
+  name: string;
+  created_at: string;
+}
+
+export const tagsApi = {
+  list: () => invoke<Tag[]>("list_tags"),
+  create: (name: string) => invoke<Tag>("create_tag", { name }),
+  delete: (id: number) => invoke<void>("delete_tag", { id }),
+  attach: (transactionId: number, tagId: number) =>
+    invoke<void>("attach_tag", { transactionId, tagId }),
+  detach: (transactionId: number, tagId: number) =>
+    invoke<void>("detach_tag", { transactionId, tagId }),
+  listForTransaction: (transactionId: number) =>
+    invoke<Tag[]>("list_tags_for_transaction", { transactionId }),
+};
+
+// --- Split transactions (Transaction Intelligence, specs/phase-012) ---
+export interface Split {
+  id: number;
+  transaction_id: number;
+  category: string | null;
+  subcategory: string | null;
+  amount_cents: number;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SplitInput {
+  category: string | null;
+  subcategory: string | null;
+  amount_cents: number;
+  notes: string | null;
+}
+
+export const splitsApi = {
+  list: (transactionId: number) =>
+    invoke<Split[]>("list_splits", { transactionId }),
+  set: (transactionId: number, splits: SplitInput[]) =>
+    invoke<Split[]>("set_splits", { transactionId, splits }),
+};
+
+// --- Free-text category cleanup (Transaction Intelligence, specs/phase-012) ---
+export interface RenameSummary {
+  transactions_updated: number;
+  splits_updated: number;
+  rules_updated: number;
+  budgets_updated: number;
+  budgets_skipped_due_to_conflict: number;
+}
+
+export const categoriesApi = {
+  rename: (from: string, to: string) =>
+    invoke<RenameSummary>("rename_category", { from, to }),
+};
+
+// --- Bulk transaction actions (Transaction Intelligence, specs/phase-012) ---
+export interface BulkResult {
+  updated_count: number;
+}
+
+export const bulkApi = {
+  setCategory: (ids: number[], category: string | null) =>
+    invoke<BulkResult>("bulk_set_category", { ids, category }),
+  setPayee: (ids: number[], payeeId: number | null) =>
+    invoke<BulkResult>("bulk_set_payee", { ids, payeeId }),
+  setOneTime: (ids: number[], isOneTime: boolean) =>
+    invoke<BulkResult>("bulk_set_one_time", { ids, isOneTime }),
+  setArchived: (ids: number[], archived: boolean) =>
+    invoke<BulkResult>("bulk_set_archived", { ids, archived }),
+  addTag: (ids: number[], tagId: number) =>
+    invoke<BulkResult>("bulk_add_tag", { ids, tagId }),
+  removeTag: (ids: number[], tagId: number) =>
+    invoke<BulkResult>("bulk_remove_tag", { ids, tagId }),
 };

@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
-import type { IssueType, NeedsReviewItem } from "./api/midas";
-import { needsReviewApi } from "./api/midas";
+import type {
+  Account,
+  IssueType,
+  NeedsReviewItem,
+  Transaction,
+} from "./api/midas";
+import { accountsApi, needsReviewApi, transactionsApi } from "./api/midas";
+import TransactionForm from "./TransactionForm";
 
 const ISSUE_TYPE_LABELS: Record<IssueType, string> = {
   malformed_row: "Malformed row",
@@ -30,6 +36,8 @@ function NeedsReviewPage() {
   const [showAll, setShowAll] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [fixing, setFixing] = useState<Transaction | null>(null);
 
   async function refresh() {
     setLoading(true);
@@ -48,10 +56,32 @@ function NeedsReviewPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showAll]);
 
+  useEffect(() => {
+    accountsApi
+      .list(true)
+      .then(setAccounts)
+      .catch((err) => setError(String(err)));
+  }, []);
+
   async function resolve(id: number, action: "resolved" | "dismissed") {
     try {
       await needsReviewApi.resolve(id, action);
       await refresh();
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  async function handleFix(transactionId: number) {
+    setError(null);
+    try {
+      const all = await transactionsApi.list({ include_archived: true });
+      const match = all.find((t) => t.id === transactionId);
+      if (!match) {
+        setError("That transaction no longer exists.");
+        return;
+      }
+      setFixing(match);
     } catch (err) {
       setError(String(err));
     }
@@ -105,27 +135,51 @@ function NeedsReviewPage() {
                   {formatSourceRow(item.source_row_json)}
                 </p>
               )}
-              {item.resolution_status === "open" && (
-                <div className="review-item-actions">
+              <div className="review-item-actions">
+                {item.transaction_id !== null && (
                   <button
                     type="button"
                     className="btn-link"
-                    onClick={() => resolve(item.id, "resolved")}
+                    onClick={() => handleFix(item.transaction_id!)}
                   >
-                    Mark resolved
+                    Fix transaction
                   </button>
-                  <button
-                    type="button"
-                    className="btn-link"
-                    onClick={() => resolve(item.id, "dismissed")}
-                  >
-                    Dismiss
-                  </button>
-                </div>
-              )}
+                )}
+                {item.resolution_status === "open" && (
+                  <>
+                    <button
+                      type="button"
+                      className="btn-link"
+                      onClick={() => resolve(item.id, "resolved")}
+                    >
+                      Mark resolved
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-link"
+                      onClick={() => resolve(item.id, "dismissed")}
+                    >
+                      Dismiss
+                    </button>
+                  </>
+                )}
+              </div>
             </li>
           ))}
         </ul>
+      )}
+
+      {fixing && (
+        <TransactionForm
+          accounts={accounts}
+          defaultAccountId={fixing.account_id}
+          transaction={fixing}
+          onClose={() => setFixing(null)}
+          onSaved={() => {
+            setFixing(null);
+            refresh();
+          }}
+        />
       )}
     </section>
   );
