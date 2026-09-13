@@ -44,7 +44,7 @@ const navGroups: {
     label: "Planning",
     items: [
       { id: "budgets", label: "Budget" },
-      { id: "bills", label: "Bills" },
+      { id: "bills", label: "Recurring" },
       { id: "goals", label: "Goals" },
     ],
   },
@@ -161,7 +161,7 @@ function App() {
           {tab === "transactions" && <TransactionsPage onNavigate={setTab} />}
           {tab === "accounts" && <AccountsPage />}
           {tab === "budgets" && <BudgetsPage />}
-          {tab === "bills" && <RecurringPage />}
+          {tab === "bills" && <RecurringPage onNavigate={setTab} />}
           {tab === "goals" && <SavingsGoalsPage />}
           {tab === "reports" && <ReportsPage />}
           {tab === "networth" && <NetWorthPage />}

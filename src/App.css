@@ -1229,6 +1229,85 @@ footer {
   word-break: break-word;
 }
 
+/* Recurring */
+
+.recurring-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 1.25rem 0 1rem;
+}
+
+.recurring-tab {
+  padding: 0.45rem 0.9rem;
+  border: 1px solid var(--midas-border);
+  border-radius: 999px;
+  background: var(--midas-surface);
+  color: var(--midas-text-muted);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.recurring-tab:hover,
+.recurring-tab:focus-visible {
+  color: var(--midas-text);
+}
+
+.recurring-tab-active {
+  border-color: var(--midas-gold);
+  color: var(--midas-bg-deep);
+  background: var(--midas-gold);
+}
+
+.calendar-nav {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.calendar-day-group {
+  margin-bottom: 1.5rem;
+}
+
+.calendar-day-heading {
+  margin: 0 0 0.5rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--midas-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.price-history {
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--midas-border);
+}
+
+.price-history-chart {
+  display: block;
+  width: 100%;
+  max-width: 20rem;
+  height: 2.5rem;
+}
+
+.price-history-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 1rem;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.85rem;
+}
+
+.pattern-lifecycle {
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--midas-border);
+}
+
 @media (max-width: 640px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -1284,6 +1363,16 @@ footer {
 
   .accounts-toolbar-actions {
     align-self: stretch;
+    justify-content: space-between;
+  }
+
+  .recurring-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 0.25rem;
+  }
+
+  .calendar-nav {
     justify-content: space-between;
   }
 }

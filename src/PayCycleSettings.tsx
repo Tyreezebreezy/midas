@@ -26,6 +26,15 @@ function suggestScheduleFromSeries(s: RecurringSeries): PaySchedule | null {
         schedule_type: "monthly",
         day_of_month: Number(anchor.slice(8, 10)),
       };
+    case "semimonthly":
+      if (s.semimonthly_day_1 == null || s.semimonthly_day_2 == null) {
+        return null;
+      }
+      return {
+        schedule_type: "semimonthly",
+        day_of_month_1: s.semimonthly_day_1,
+        day_of_month_2: s.semimonthly_day_2,
+      };
     default:
       return null; // quarterly/annual patterns don't map to a pay schedule
   }

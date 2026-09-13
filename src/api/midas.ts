@@ -434,26 +434,82 @@ export interface CorrectionResult {
   past_transactions_updated: number;
 }
 
-// --- Recurring series / bills ---
+// --- Recurring series / bills (Batch 6, specs/phase-014) ---
 export type Cadence =
-  "weekly" | "biweekly" | "monthly" | "quarterly" | "annual";
-export type SeriesStatus = "proposed" | "confirmed" | "rejected";
+  "weekly" | "biweekly" | "monthly" | "quarterly" | "annual" | "semimonthly";
+export type RecurringDirection = "expense" | "income" | "transfer";
+export type RecurringKind =
+  "subscription" | "bill" | "membership" | "recurring_income" | "other";
+export type SeriesStatus = "proposed" | "confirmed" | "rejected" | "inactive";
+export type OccurrenceStatus =
+  "upcoming" | "due" | "matched" | "missed" | "skipped" | "needs_review";
 
 export interface RecurringSeries {
   id: number;
   account_id: number;
+  payee_id: number | null;
   merchant: string;
+  direction: RecurringDirection;
+  kind: RecurringKind;
   cadence: Cadence;
+  semimonthly_day_1: number | null;
+  semimonthly_day_2: number | null;
   expected_amount_cents: number;
   next_expected_date: string;
   category: string | null;
   status: SeriesStatus;
+  planning_to_cancel: boolean;
+  notes: string | null;
+  created_source: string;
   created_at: string;
   updated_at: string;
+  // --- computed live from linked transactions, never separately stored ---
   last_occurrence_date: string | null;
   last_amount_cents: number | null;
+  min_amount_cents: number | null;
+  max_amount_cents: number | null;
+  median_amount_cents: number | null;
+  occurrence_count: number;
   is_price_changed: boolean;
+  previous_typical_amount_cents: number | null;
   is_possibly_missed: boolean;
+  monthly_equivalent_cents: number;
+  annual_equivalent_cents: number;
+}
+
+export interface PatternEditInput {
+  merchant: string;
+  payee_id: number | null;
+  kind: RecurringKind;
+  category: string | null;
+  cadence: Cadence;
+  semimonthly_day_1: number | null;
+  semimonthly_day_2: number | null;
+  expected_amount_cents: number;
+  next_expected_date: string;
+  notes: string | null;
+}
+
+export interface PriceHistoryPoint {
+  transaction_id: number;
+  date: string;
+  amount_cents: number;
+}
+
+export interface RecurringOccurrence {
+  id: number;
+  series_id: number;
+  expected_date: string;
+  expected_amount_cents: number;
+  status: OccurrenceStatus;
+  matched_transaction_id: number | null;
+  created_at: string;
+  updated_at: string;
+  // Denormalized from the parent series for list/calendar display.
+  merchant: string;
+  direction: RecurringDirection;
+  kind: RecurringKind;
+  account_id: number;
 }
 
 export const recurringApi = {
@@ -463,6 +519,54 @@ export const recurringApi = {
     invoke<RecurringSeries[]>("detect_recurring", { accountId }),
   confirm: (id: number) => invoke<RecurringSeries>("confirm_recurring", { id }),
   reject: (id: number) => invoke<RecurringSeries>("reject_recurring", { id }),
+  setInactive: (id: number) =>
+    invoke<RecurringSeries>("set_recurring_inactive", { id }),
+  reactivate: (id: number) =>
+    invoke<RecurringSeries>("reactivate_recurring", { id }),
+  setPlanningToCancel: (id: number, planningToCancel: boolean) =>
+    invoke<RecurringSeries>("set_recurring_planning_to_cancel", {
+      id,
+      planningToCancel,
+    }),
+  createManual: (
+    accountId: number,
+    direction: RecurringDirection,
+    input: PatternEditInput,
+  ) =>
+    invoke<RecurringSeries>("create_manual_recurring", {
+      accountId,
+      direction,
+      input,
+    }),
+  updatePattern: (id: number, input: PatternEditInput) =>
+    invoke<RecurringSeries>("update_recurring_pattern", { id, input }),
+  moveAccount: (id: number, newAccountId: number) =>
+    invoke<RecurringSeries>("move_recurring_account", { id, newAccountId }),
+  priceHistory: (seriesId: number) =>
+    invoke<PriceHistoryPoint[]>("get_recurring_price_history", { seriesId }),
+  listOccurrences: (seriesId: number) =>
+    invoke<RecurringOccurrence[]>("list_recurring_occurrences", { seriesId }),
+  getOccurrence: (occurrenceId: number) =>
+    invoke<RecurringOccurrence | null>("get_recurring_occurrence", {
+      occurrenceId,
+    }),
+  upcoming: (from: string, to: string, accountId: number | null) =>
+    invoke<RecurringOccurrence[]>("list_upcoming_recurring", {
+      from,
+      to,
+      accountId,
+    }),
+  skipOccurrence: (occurrenceId: number) =>
+    invoke<RecurringOccurrence>("skip_recurring_occurrence", { occurrenceId }),
+  linkOccurrence: (occurrenceId: number, transactionId: number) =>
+    invoke<RecurringOccurrence>("link_recurring_occurrence", {
+      occurrenceId,
+      transactionId,
+    }),
+  unlinkOccurrence: (occurrenceId: number) =>
+    invoke<RecurringOccurrence>("unlink_recurring_occurrence", {
+      occurrenceId,
+    }),
 };
 
 // --- Accounting boundary (Phase 4A, ADR-0007) ---
