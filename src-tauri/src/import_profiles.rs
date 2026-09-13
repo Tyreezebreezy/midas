@@ -370,6 +370,10 @@ mod tests {
             "../migrations/0012_transaction_intelligence.sql"
         ))
         .unwrap();
+        conn.execute_batch(include_str!(
+            "../migrations/0013_recurring_intelligence.sql"
+        ))
+        .unwrap();
         conn
     }
 

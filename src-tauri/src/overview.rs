@@ -148,6 +148,10 @@ mod tests {
             "../migrations/0012_transaction_intelligence.sql"
         ))
         .unwrap();
+        conn.execute_batch(include_str!(
+            "../migrations/0013_recurring_intelligence.sql"
+        ))
+        .unwrap();
         conn
     }
 
@@ -296,7 +300,7 @@ mod tests {
 
     #[test]
     fn capped_lists_respect_their_limits_while_counts_stay_accurate() {
-        let conn = test_conn();
+        let mut conn = test_conn();
         let today = today_str(&conn);
         let account = make_account(&conn);
 
@@ -319,7 +323,7 @@ mod tests {
             }
         }
         for candidate in recurring::detect_candidates(&conn, account).unwrap() {
-            recurring::confirm(&conn, candidate.id).unwrap();
+            recurring::confirm(&mut conn, candidate.id).unwrap();
         }
 
         // Seed more open needs-review items than the preview cap.

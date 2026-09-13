@@ -241,6 +241,18 @@ impl From<rusqlite::Error> for TransactionError {
     }
 }
 
+impl From<crate::recurring::RecurringError> for TransactionError {
+    fn from(e: crate::recurring::RecurringError) -> Self {
+        match e {
+            crate::recurring::RecurringError::Db(e) => TransactionError::Db(e),
+            crate::recurring::RecurringError::Validation(msg) => TransactionError::Validation(msg),
+            crate::recurring::RecurringError::NotFound(id) => {
+                TransactionError::Validation(format!("recurring series {id} not found"))
+            }
+        }
+    }
+}
+
 const COLUMNS: &str = "id, account_id, transaction_date, posted_date, amount_cents, transaction_type, \
     raw_description, merchant, category, subcategory, notes, tags, is_pending, is_archived, review_status, \
     source_import_id, source_row_hash, transfer_pair_transaction_id, refund_of_transaction_id, \
@@ -341,6 +353,11 @@ pub fn create(
         ],
         |row| row.get::<_, i64>(0),
     )?;
+    // One shared path for manual entry and every importer (section 51/52) -
+    // try matching this real transaction to an expected recurring
+    // occurrence right where it's created, never a separate recurring-
+    // import pipeline.
+    crate::recurring_occurrences::evaluate_transaction_for_matching(conn, id)?;
     get(conn, id)?.ok_or(TransactionError::NotFound(id))
 }
 
@@ -549,10 +566,14 @@ pub fn update(
     // the incoming values to decide whether this edit is one of the kinds
     // section 16 names as invalidating (amount/account/type/date-crossing-
     // the-statement-boundary), never for a harmless field like notes or
-    // category, which this snapshot doesn't even look at.
-    let before: Option<(i64, i64, String, String, Option<i64>)> = conn
+    // category, which this snapshot doesn't even look at. merchant/payee_id
+    // are captured for the same reason on the recurring-matching side
+    // (section 49) - a harmless notes/tags/category-only edit must never
+    // disturb an existing recurring match.
+    type BeforeSnapshot = (i64, i64, String, String, Option<i64>, String, Option<i64>);
+    let before: Option<BeforeSnapshot> = conn
         .query_row(
-            "SELECT account_id, amount_cents, transaction_type, transaction_date, reconciliation_id
+            "SELECT account_id, amount_cents, transaction_type, transaction_date, reconciliation_id, merchant, payee_id
              FROM transactions WHERE id = ?1",
             params![id],
             |row| {
@@ -562,6 +583,8 @@ pub fn update(
                     row.get(2)?,
                     row.get(3)?,
                     row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
                 ))
             },
         )
@@ -597,7 +620,15 @@ pub fn update(
         return Err(TransactionError::NotFound(id));
     }
 
-    if let Some((old_account_id, old_amount_cents, old_type, old_date, reconciliation_id)) = before
+    if let Some((
+        old_account_id,
+        old_amount_cents,
+        old_type,
+        old_date,
+        reconciliation_id,
+        old_merchant,
+        old_payee_id,
+    )) = before
     {
         crate::reconciliation::invalidate_if_update_matters(
             conn,
@@ -611,6 +642,16 @@ pub fn update(
             input.transaction_type.as_sql_str(),
             &date,
         )?;
+
+        let identity_or_financials_changed = old_account_id != input.account_id
+            || old_amount_cents != input.amount_cents
+            || old_type != input.transaction_type.as_sql_str()
+            || old_date != date
+            || old_merchant != merchant
+            || old_payee_id != input.payee_id;
+        if identity_or_financials_changed {
+            crate::recurring_occurrences::reevaluate_after_edit(conn, id)?;
+        }
     }
 
     get(conn, id)?.ok_or(TransactionError::NotFound(id))
@@ -768,6 +809,10 @@ mod tests {
             .unwrap();
         conn.execute_batch(include_str!(
             "../migrations/0012_transaction_intelligence.sql"
+        ))
+        .unwrap();
+        conn.execute_batch(include_str!(
+            "../migrations/0013_recurring_intelligence.sql"
         ))
         .unwrap();
         conn

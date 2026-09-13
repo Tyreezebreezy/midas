@@ -245,22 +245,28 @@ pub(crate) fn obligations_before(
         .iter()
         .filter(|s| s.status == SeriesStatus::Confirmed)
         .filter(|s| s.next_expected_date.as_str() <= next_payday)
-        .filter(|s| s.expected_amount_cents < 0)
+        // First-class direction, never raw sign (Batch 6) - a confirmed
+        // recurring charge on a credit card is a *positive* expected_amount
+        // per ADR-0004, but is still a bill, exactly like a negative one on
+        // a checking account.
+        .filter(|s| s.direction == recurring::Direction::Expense)
         .map(|s| s.expected_amount_cents.abs())
         .sum())
 }
 
 /// The confirmed recurring bills soonest due, for the Overview's "Upcoming
 /// Bills" widget - the same definition of "bill" `obligations_before` sums
-/// (confirmed, negative expected amount), just returned as the list itself
-/// rather than a total, capped to `limit` for a glanceable screen.
+/// (confirmed, Direction::Expense), just returned as the list itself rather
+/// than a total, capped to `limit` for a glanceable screen.
 pub(crate) fn upcoming_bills(
     conn: &Connection,
     limit: usize,
 ) -> Result<Vec<RecurringSeries>, PayCycleError> {
     let mut series: Vec<RecurringSeries> = active_account_series(conn)?
         .into_iter()
-        .filter(|s| s.status == SeriesStatus::Confirmed && s.expected_amount_cents < 0)
+        .filter(|s| {
+            s.status == SeriesStatus::Confirmed && s.direction == recurring::Direction::Expense
+        })
         .collect();
     series.sort_by(|a, b| a.next_expected_date.cmp(&b.next_expected_date));
     series.truncate(limit);
@@ -277,7 +283,7 @@ pub fn likely_income_series(conn: &Connection) -> Result<Vec<RecurringSeries>, P
     Ok(all
         .into_iter()
         .filter(|s| s.status != SeriesStatus::Rejected)
-        .filter(|s| s.expected_amount_cents > 0)
+        .filter(|s| s.direction == recurring::Direction::Income)
         .collect())
 }
 
@@ -370,6 +376,10 @@ mod tests {
             .unwrap();
         conn.execute_batch(include_str!(
             "../migrations/0012_transaction_intelligence.sql"
+        ))
+        .unwrap();
+        conn.execute_batch(include_str!(
+            "../migrations/0013_recurring_intelligence.sql"
         ))
         .unwrap();
         conn
@@ -582,47 +592,102 @@ mod tests {
 
     #[test]
     fn obligations_before_payday_sums_only_confirmed_upcoming_bills() {
-        let conn = test_conn();
+        let mut conn = test_conn();
         let account = make_account(&conn);
 
-        add_txn(&conn, account, "2026-06-05", -999, "Streaming Service");
-        add_txn(&conn, account, "2026-07-05", -999, "Streaming Service");
-        add_txn(&conn, account, "2026-08-05", -999, "Streaming Service");
+        // Anchored to real "today" (section 85: tests must not randomly
+        // fail depending on the date they run on) - `confirm` now triggers
+        // occurrence generation against the real wall clock, so a bill
+        // whose next date is safely in the future never gets marked missed
+        // out from under this test as real time advances.
+        let next = dates::add_days(&today(&conn).unwrap(), 10);
+        let last = dates::add_months(&next, -1);
+        let two_ago = dates::add_months(&next, -2);
+        let three_ago = dates::add_months(&next, -3);
+
+        add_txn(&conn, account, &three_ago, -999, "Streaming Service");
+        add_txn(&conn, account, &two_ago, -999, "Streaming Service");
+        add_txn(&conn, account, &last, -999, "Streaming Service");
         let candidates = recurring::detect_candidates(&conn, account).unwrap();
         let bill = candidates.into_iter().next().unwrap();
-        assert_eq!(bill.next_expected_date, "2026-09-04");
+        // Same day next calendar month (section 7 - add_months, not a
+        // naive +30 days).
+        assert_eq!(bill.next_expected_date, next);
 
         // Proposed (not yet confirmed) must not count as an obligation,
         // even though its date falls before the chosen payday.
-        assert_eq!(obligations_before(&conn, "2026-09-10").unwrap(), 0);
+        let payday_after = dates::add_days(&next, 5);
+        assert_eq!(obligations_before(&conn, &payday_after).unwrap(), 0);
 
-        recurring::confirm(&conn, bill.id).unwrap();
+        recurring::confirm(&mut conn, bill.id).unwrap();
         // A payday before the bill's next date: not yet an obligation.
-        assert_eq!(obligations_before(&conn, "2026-09-01").unwrap(), 0);
+        let payday_before = dates::add_days(&next, -4);
+        assert_eq!(obligations_before(&conn, &payday_before).unwrap(), 0);
         // A payday on/after the bill's next date: counted, in cents, as a
         // positive obligation despite the bill's own amount being negative.
-        assert_eq!(obligations_before(&conn, "2026-09-04").unwrap(), 999);
-        assert_eq!(obligations_before(&conn, "2026-09-10").unwrap(), 999);
+        assert_eq!(obligations_before(&conn, &next).unwrap(), 999);
+        assert_eq!(obligations_before(&conn, &payday_after).unwrap(), 999);
     }
 
     #[test]
     fn upcoming_bills_returns_confirmed_bills_soonest_due_first_capped_to_limit() {
-        let conn = test_conn();
+        let mut conn = test_conn();
         let account = make_account(&conn);
 
-        add_txn(&conn, account, "2026-06-05", -999, "Streaming Service");
-        add_txn(&conn, account, "2026-07-05", -999, "Streaming Service");
-        add_txn(&conn, account, "2026-08-05", -999, "Streaming Service");
-        add_txn(&conn, account, "2026-06-10", -5000, "Rent");
-        add_txn(&conn, account, "2026-07-10", -5000, "Rent");
-        add_txn(&conn, account, "2026-08-10", -5000, "Rent");
+        // Anchored to real "today" (section 85) so `confirm`'s occurrence
+        // generation never marks either bill missed out from under the test.
+        let streaming_next = dates::add_days(&today(&conn).unwrap(), 10);
+        let rent_next = dates::add_days(&today(&conn).unwrap(), 15);
+
+        add_txn(
+            &conn,
+            account,
+            &dates::add_months(&streaming_next, -3),
+            -999,
+            "Streaming Service",
+        );
+        add_txn(
+            &conn,
+            account,
+            &dates::add_months(&streaming_next, -2),
+            -999,
+            "Streaming Service",
+        );
+        add_txn(
+            &conn,
+            account,
+            &dates::add_months(&streaming_next, -1),
+            -999,
+            "Streaming Service",
+        );
+        add_txn(
+            &conn,
+            account,
+            &dates::add_months(&rent_next, -3),
+            -5000,
+            "Rent",
+        );
+        add_txn(
+            &conn,
+            account,
+            &dates::add_months(&rent_next, -2),
+            -5000,
+            "Rent",
+        );
+        add_txn(
+            &conn,
+            account,
+            &dates::add_months(&rent_next, -1),
+            -5000,
+            "Rent",
+        );
         add_txn(&conn, account, "2026-06-01", 250000, "ACME Payroll");
         add_txn(&conn, account, "2026-06-15", 250000, "ACME Payroll");
         add_txn(&conn, account, "2026-06-29", 250000, "ACME Payroll");
 
         for candidate in recurring::detect_candidates(&conn, account).unwrap() {
-            if candidate.expected_amount_cents < 0 {
-                recurring::confirm(&conn, candidate.id).unwrap();
+            if candidate.direction == recurring::Direction::Expense {
+                recurring::confirm(&mut conn, candidate.id).unwrap();
             }
             // Payroll is left proposed - income must never appear as a bill.
         }
@@ -679,7 +744,7 @@ mod tests {
         // later archived must not keep counting toward either figure -
         // caught during live verification when an archived-account leftover
         // from an earlier phase silently inflated obligations_before.
-        let conn = test_conn();
+        let mut conn = test_conn();
         let closed_account = make_account(&conn);
         add_txn(
             &conn,
@@ -703,7 +768,7 @@ mod tests {
             "Old Streaming Service",
         );
         let candidates = recurring::detect_candidates(&conn, closed_account).unwrap();
-        recurring::confirm(&conn, candidates[0].id).unwrap();
+        recurring::confirm(&mut conn, candidates[0].id).unwrap();
         accounts::set_archived(&conn, closed_account, true).unwrap();
 
         assert_eq!(obligations_before(&conn, "2099-01-01").unwrap(), 0);

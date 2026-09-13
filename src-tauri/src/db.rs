@@ -15,6 +15,7 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0010_ofx_source_adapter.sql"),
     include_str!("../migrations/0011_reconciliation.sql"),
     include_str!("../migrations/0012_transaction_intelligence.sql"),
+    include_str!("../migrations/0013_recurring_intelligence.sql"),
 ];
 
 /// The schema version this build knows how to read and write - always
@@ -274,7 +275,7 @@ mod tests {
             conn.execute_batch(sql).unwrap();
         }
         conn.pragma_update(None, "user_version", 7).unwrap();
-        assert_eq!(MIGRATIONS.len(), 12, "this test targets exactly the v0.1.0 -> Foundation Batch 1 boundary; update the slice above if more migrations are added before this one");
+        assert_eq!(MIGRATIONS.len(), 13, "this test targets exactly the v0.1.0 -> Foundation Batch 1 boundary; update the slice above if more migrations are added before this one");
 
         conn.execute(
             "INSERT INTO accounts (id, name, institution, account_type, include_in_net_worth, notes)
@@ -480,7 +481,7 @@ mod tests {
             conn.execute_batch(sql).unwrap();
         }
         conn.pragma_update(None, "user_version", 8).unwrap();
-        assert_eq!(MIGRATIONS.len(), 12, "this test targets exactly the Foundation Batch 1 -> Import Engine v2 boundary; update the slice above if more migrations are added before this one");
+        assert_eq!(MIGRATIONS.len(), 13, "this test targets exactly the Foundation Batch 1 -> Import Engine v2 boundary; update the slice above if more migrations are added before this one");
 
         conn.execute(
             "INSERT INTO accounts (id, name, account_type, include_in_net_worth) VALUES (1, 'Checking', 'checking', 1)",
@@ -556,7 +557,7 @@ mod tests {
             conn.execute_batch(sql).unwrap();
         }
         conn.pragma_update(None, "user_version", 9).unwrap();
-        assert_eq!(MIGRATIONS.len(), 12, "this test targets exactly the Import Engine v2 -> OFX source adapter boundary; update the slice above if more migrations are added before this one");
+        assert_eq!(MIGRATIONS.len(), 13, "this test targets exactly the Import Engine v2 -> OFX source adapter boundary; update the slice above if more migrations are added before this one");
 
         conn.execute(
             "INSERT INTO accounts (id, name, account_type, include_in_net_worth) VALUES (1, 'Checking', 'checking', 1)",
@@ -712,7 +713,7 @@ mod tests {
             conn.execute_batch(sql).unwrap();
         }
         conn.pragma_update(None, "user_version", 11).unwrap();
-        assert_eq!(MIGRATIONS.len(), 12, "this test targets exactly the Reconciliation -> Transaction Intelligence boundary; update the slice above if more migrations are added before this one");
+        assert_eq!(MIGRATIONS.len(), 13, "this test targets exactly the Reconciliation -> Transaction Intelligence boundary; update the slice above if more migrations are added before this one");
 
         conn.execute(
             "INSERT INTO accounts (id, name, account_type, include_in_net_worth) VALUES (1, 'Checking', 'checking', 1)",
@@ -750,6 +751,110 @@ mod tests {
         assert_eq!(
             split_count, 0,
             "transaction_splits must exist and start empty"
+        );
+    }
+
+    /// Recurring Intelligence (specs/phase-014) rebuilds `recurring_series`
+    /// (new payee_id/direction/kind/semimonthly/planning_to_cancel columns,
+    /// an expanded cadence/status CHECK) and adds `recurring_occurrences` -
+    /// same proof shape as the migrations above, scoped to the 0012 -> 0013
+    /// boundary. A pre-existing series (income, positive amount, exactly
+    /// the shape of the 0008 fixture's Netflix row but flipped positive to
+    /// prove the sign-based direction backfill) must survive with its new
+    /// columns defaulted sanely.
+    #[test]
+    fn migration_0013_preserves_existing_recurring_series_and_backfills_direction() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        for sql in &MIGRATIONS[0..12] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 12).unwrap();
+        assert_eq!(MIGRATIONS.len(), 13, "this test targets exactly the Transaction Intelligence -> Recurring Intelligence boundary; update the slice above if more migrations are added before this one");
+
+        conn.execute(
+            "INSERT INTO accounts (id, name, account_type, include_in_net_worth) VALUES (1, 'Checking', 'checking', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO recurring_series (id, account_id, merchant, cadence, expected_amount_cents, next_expected_date, category, status)
+             VALUES (1, 1, 'Employer Payroll', 'biweekly', 190000, '2026-09-25', NULL, 'confirmed')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO recurring_series (id, account_id, merchant, cadence, expected_amount_cents, next_expected_date, category, status)
+             VALUES (2, 1, 'Netflix', 'monthly', -1549, '2026-09-17', 'Subscriptions', 'proposed')",
+            [],
+        )
+        .unwrap();
+
+        conn.execute_batch(MIGRATIONS[12]).unwrap();
+        conn.pragma_update(None, "user_version", 13).unwrap();
+
+        let version: i32 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 13);
+
+        let (merchant, cadence, amount, status, direction, kind, payee_id, planning_to_cancel): (
+            String,
+            String,
+            i64,
+            String,
+            String,
+            String,
+            Option<i64>,
+            i64,
+        ) = conn
+            .query_row(
+                "SELECT merchant, cadence, expected_amount_cents, status, direction, kind, payee_id, planning_to_cancel
+                 FROM recurring_series WHERE id = 1",
+                [],
+                |r| {
+                    Ok((
+                        r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?,
+                        r.get(6)?, r.get(7)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(merchant, "Employer Payroll");
+        assert_eq!(cadence, "biweekly");
+        assert_eq!(amount, 190000);
+        assert_eq!(status, "confirmed");
+        assert_eq!(
+            direction, "income",
+            "a positive pre-existing series backfills to income"
+        );
+        assert_eq!(
+            kind, "other",
+            "new kind column defaults sanely for old rows"
+        );
+        assert_eq!(payee_id, None);
+        assert_eq!(planning_to_cancel, 0);
+
+        let netflix_direction: String = conn
+            .query_row(
+                "SELECT direction FROM recurring_series WHERE id = 2",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            netflix_direction, "expense",
+            "a negative pre-existing series backfills to expense"
+        );
+
+        let occurrence_count: i64 = conn
+            .query_row("SELECT count(*) FROM recurring_occurrences", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(
+            occurrence_count, 0,
+            "recurring_occurrences must exist and start empty"
         );
     }
 }

@@ -186,6 +186,10 @@ mod tests {
             "../migrations/0012_transaction_intelligence.sql"
         ))
         .unwrap();
+        conn.execute_batch(include_str!(
+            "../migrations/0013_recurring_intelligence.sql"
+        ))
+        .unwrap();
         conn
     }
 
@@ -285,15 +289,20 @@ mod tests {
 
     #[test]
     fn safe_to_spend_with_obligations_subtracts_confirmed_upcoming_bills() {
-        let conn = test_conn();
+        let mut conn = test_conn();
         let checking = make_account(&conn, "Checking", AccountType::Checking);
         add_txn(&conn, checking, &today(&conn), 500_000, "Deposit");
 
-        // Three monthly occurrences (exact 30-day gaps, day-based so this
-        // is deterministic regardless of the real calendar date the test
-        // runs on) ending 16 days ago, so next_expected_date lands exactly
-        // on a biweekly payday anchored today (today + 14).
-        let last_bill = crate::dates::add_days(&today(&conn), -16);
+        // Three monthly occurrences (exact 30-day gaps between them, day-
+        // based so classification is deterministic regardless of the real
+        // calendar date the test runs on) ending 20 days ago. The next
+        // occurrence is projected one *calendar* month past the last one
+        // (section 7 - add_months, not a naive +30 days), which lands
+        // 28-31 days later depending on the months involved; starting 20
+        // days back guarantees the projected date is always <= today + 14
+        // (the biweekly payday anchored today) regardless of that
+        // variance, since 20 + 28 already covers it.
+        let last_bill = crate::dates::add_days(&today(&conn), -20);
         let bill_dates = [
             crate::dates::add_days(&last_bill, -60),
             crate::dates::add_days(&last_bill, -30),
@@ -303,7 +312,7 @@ mod tests {
             add_txn(&conn, checking, d, -1000, "Bill");
         }
         let candidates = recurring::detect_candidates(&conn, checking).unwrap();
-        recurring::confirm(&conn, candidates[0].id).unwrap();
+        recurring::confirm(&mut conn, candidates[0].id).unwrap();
 
         set_schedule(
             &conn,

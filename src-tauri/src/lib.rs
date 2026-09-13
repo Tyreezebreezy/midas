@@ -17,6 +17,7 @@ mod pay_cycle;
 mod payees;
 mod reconciliation;
 mod recurring;
+mod recurring_occurrences;
 mod reports;
 mod rules;
 mod safe_to_spend;
@@ -70,6 +71,19 @@ pub fn run() {
             recurring::detect_recurring,
             recurring::confirm_recurring,
             recurring::reject_recurring,
+            recurring::set_recurring_inactive,
+            recurring::reactivate_recurring,
+            recurring::set_recurring_planning_to_cancel,
+            recurring::create_manual_recurring,
+            recurring::update_recurring_pattern,
+            recurring::move_recurring_account,
+            recurring::get_recurring_price_history,
+            recurring_occurrences::list_recurring_occurrences,
+            recurring_occurrences::get_recurring_occurrence,
+            recurring_occurrences::list_upcoming_recurring,
+            recurring_occurrences::skip_recurring_occurrence,
+            recurring_occurrences::link_recurring_occurrence,
+            recurring_occurrences::unlink_recurring_occurrence,
             accounting::reconcile_account_balance,
             accounting::get_net_worth,
             accounting::get_net_worth_history,
