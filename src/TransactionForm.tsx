@@ -9,6 +9,11 @@ import type {
 } from "./api/midas";
 import { payeesApi, rulesApi, tagsApi, transactionsApi } from "./api/midas";
 import SplitEditor from "./SplitEditor";
+import {
+  LIABILITY_TYPES,
+  amountIsMoneyIn,
+  signedAmountCents,
+} from "./lib/accountTypes";
 import { SUGGESTED_CATEGORIES } from "./lib/categories";
 import { centsToDollarInput, parseDollarsToCents } from "./lib/currency";
 import {
@@ -35,11 +40,19 @@ function TransactionForm({
   const [accountId, setAccountId] = useState<number>(
     transaction?.account_id ?? defaultAccountId ?? accounts[0]?.id ?? 0,
   );
+  // Recomputed every render (not stored state) so switching the account
+  // mid-edit - e.g. checking to a credit card - never leaves the direction
+  // toggle or a subsequent save using a stale account's sign semantics
+  // (ADR-0004: liability accounts invert what "money in/out" means).
+  const selectedAccountType =
+    accounts.find((a) => a.id === accountId)?.account_type ?? "checking";
   const [date, setDate] = useState(
     transaction?.transaction_date ?? new Date().toISOString().slice(0, 10),
   );
   const [moneyIn, setMoneyIn] = useState(
-    transaction ? transaction.amount_cents >= 0 : false,
+    transaction
+      ? amountIsMoneyIn(transaction.amount_cents, selectedAccountType)
+      : false,
   );
   const [amountInput, setAmountInput] = useState(
     transaction
@@ -146,7 +159,7 @@ function TransactionForm({
       account_id: accountId,
       transaction_date: date,
       posted_date: null,
-      amount_cents: moneyIn ? magnitude : -magnitude,
+      amount_cents: signedAmountCents(magnitude, moneyIn, selectedAccountType),
       transaction_type: transactionType,
       // Preserve the original raw CSV text on edits (traceability); a new
       // manual entry has no separate raw text yet, so it starts equal to
@@ -344,7 +357,9 @@ function TransactionForm({
               checked={!moneyIn}
               onChange={() => setMoneyIn(false)}
             />
-            Money out (spending, transfer out)
+            {LIABILITY_TYPES.has(selectedAccountType)
+              ? "Charge or purchase (increases what you owe)"
+              : "Money out (spending, transfer out)"}
           </label>
           <label>
             <input
@@ -353,7 +368,9 @@ function TransactionForm({
               checked={moneyIn}
               onChange={() => setMoneyIn(true)}
             />
-            Money in (income, refund, transfer in)
+            {LIABILITY_TYPES.has(selectedAccountType)
+              ? "Payment or credit (decreases what you owe)"
+              : "Money in (income, refund, transfer in)"}
           </label>
         </div>
 

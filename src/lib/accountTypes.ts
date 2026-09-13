@@ -41,3 +41,41 @@ export const LIABILITY_TYPES: ReadonlySet<AccountType> = new Set([
   "loan",
   "other_liability",
 ]);
+
+// ADR-0004: amount_cents is signed relative to the effect on the account's
+// OWN balance, never "was this spending" - uniformly for every account
+// type. For an asset account, the everyday meaning of "money in"/"money
+// out" already matches this (income increases the balance, spending
+// decreases it). For a liability account the same everyday phrases invert:
+// a charge/purchase increases what's owed (positive, per
+// credit_card_purchase_is_positive_and_still_classified_as_spending in
+// transactions.rs) even though the user experiences it as spending, and a
+// payment/credit decreases what's owed (negative) even though it reads
+// like money arriving. CSV/OFX import already apply this same rule
+// (money.rs::combine_debit_credit, import.rs::default_transaction_type) -
+// this is manual entry's equivalent, so the two never disagree about what
+// the same real-world transaction should be stored as.
+export function signedAmountCents(
+  magnitudeCents: number,
+  moneyIn: boolean,
+  accountType: AccountType,
+): number {
+  const increasesBalance = LIABILITY_TYPES.has(accountType)
+    ? !moneyIn
+    : moneyIn;
+  return increasesBalance ? magnitudeCents : -magnitudeCents;
+}
+
+// Inverse of signedAmountCents - derives the "money in" direction from an
+// already-stored amount, for initializing the direction toggle when
+// opening an existing transaction (of either sign, from any source) for
+// editing.
+export function amountIsMoneyIn(
+  amountCents: number,
+  accountType: AccountType,
+): boolean {
+  const increasesBalance = amountCents >= 0;
+  return LIABILITY_TYPES.has(accountType)
+    ? !increasesBalance
+    : increasesBalance;
+}
