@@ -265,7 +265,7 @@ pub enum RowStatus {
 /// financial logic (product handoff section 6). CSV is the only producer
 /// today; a future OFX/QFX adapter constructs the same shape and reuses
 /// every matching/commit/undo/history function that takes one.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NormalizedCandidateTransaction {
     pub source_type: ImportSourceType,
     pub account_id: i64,
@@ -1642,6 +1642,17 @@ pub fn commit_ofx_import(
     )
 }
 
+/// The `proposed_resolution_json` shape for a `suspected_duplicate`/
+/// `malformed_row` review item - wraps the staged candidate (Review's
+/// "Keep Both" action, section 14, deserializes this to actually commit it
+/// later) alongside which existing transaction it was suspected of
+/// duplicating, so Review can show/link to it without a second matcher.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StagedRowProposal {
+    pub candidate: Option<NormalizedCandidateTransaction>,
+    pub duplicate_of_transaction_id: Option<i64>,
+}
+
 fn insert_review_item(
     conn: &Connection,
     issue_type: &str,
@@ -1651,10 +1662,11 @@ fn insert_review_item(
     reason: &str,
 ) -> rusqlite::Result<()> {
     let source_row_json = serde_json::to_string(&row.raw).unwrap_or_default();
-    let proposed_json = row
-        .candidate
-        .as_ref()
-        .map(|p| serde_json::to_string(p).unwrap_or_default());
+    let proposed_json = serde_json::to_string(&StagedRowProposal {
+        candidate: row.candidate.clone(),
+        duplicate_of_transaction_id: row.duplicate_of_transaction_id,
+    })
+    .ok();
     conn.execute(
         "INSERT INTO needs_review_items (issue_type, transaction_id, import_id, source_row_json, detected_reason, proposed_resolution_json)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",

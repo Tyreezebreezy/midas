@@ -15,11 +15,12 @@ use crate::accounts;
 use crate::budgets::{self, Budget};
 use crate::dates;
 use crate::db::DbState;
-use crate::needs_review::{self, NeedsReviewItem};
 use crate::pay_cycle::{self, CycleSummary};
 use crate::recurring::RecurringSeries;
+use crate::review::{self, ReviewItem};
 use crate::safe_to_spend::{self, SafeToSpendResult};
 use crate::savings_goals::{self, SavingsGoal};
+use crate::signals::{self, Signal};
 use crate::transactions::{self, Transaction, TransactionFilter};
 
 const UPCOMING_BILLS_LIMIT: usize = 5;
@@ -38,8 +39,17 @@ pub struct OverviewResult {
     pub safe_to_spend: SafeToSpendResult,
     pub upcoming_bills: Vec<RecurringSeries>,
     pub pay_cycle: Option<CycleSummary>,
+    /// Batch 9: the unified Review Center's own count/preview (section 43 -
+    /// "this is where these systems become valuable") - covers persisted
+    /// items plus every derived kind (uncategorized, recurring proposed/
+    /// missed, invalidated reconciliation), not just the raw
+    /// `needs_review_items` table Overview used before this batch.
     pub needs_review_count: usize,
-    pub needs_review_items: Vec<NeedsReviewItem>,
+    pub needs_review_items: Vec<ReviewItem>,
+    /// The single highest-severity Financial Signal, if any - restrained on
+    /// purpose (section 44: Safe to Spend stays the hero), never the full
+    /// Signals list.
+    pub top_signal: Option<Signal>,
     pub savings_goals: Vec<SavingsGoal>,
     // Supporting information.
     pub net_worth: NetWorthBreakdown,
@@ -59,12 +69,13 @@ pub fn build(conn: &Connection) -> Result<OverviewResult, String> {
         pay_cycle::upcoming_bills(conn, UPCOMING_BILLS_LIMIT).map_err(|e| e.to_string())?;
     let pay_cycle = pay_cycle::summarize(conn).map_err(|e| e.to_string())?;
 
-    let all_needs_review = needs_review::list(conn, true).map_err(|e| e.to_string())?;
-    let needs_review_count = all_needs_review.len();
-    let needs_review_items = all_needs_review
+    let all_review_items = review::list_review_items(conn).map_err(|e| e.to_string())?;
+    let needs_review_count = all_review_items.len();
+    let needs_review_items = all_review_items
         .into_iter()
         .take(NEEDS_REVIEW_PREVIEW_LIMIT)
         .collect();
+    let top_signal = signals::compute_signals(conn)?.into_iter().next();
 
     let savings_goals = savings_goals::list(conn, false).map_err(|e| e.to_string())?;
 
@@ -92,6 +103,7 @@ pub fn build(conn: &Connection) -> Result<OverviewResult, String> {
         pay_cycle,
         needs_review_count,
         needs_review_items,
+        top_signal,
         savings_goals,
         net_worth,
         budget_health,
@@ -307,12 +319,17 @@ mod tests {
         let today = today_str(&conn);
         let account = make_account(&conn);
 
-        // Seed more confirmed bills than the cap.
+        // Seed more confirmed bills than the cap. Anchored so each series'
+        // last posting lands only a few days before "today" - its
+        // post-confirm `next_expected_date` stays safely in the future
+        // (never overdue), so Batch 9's own `recurring_missed` review-item
+        // derivation doesn't also inflate `needs_review_count` and defeat
+        // this test's own narrow point (categorized, for the same reason).
         for (i, merchant) in ["Rent", "Streaming", "Gym", "Insurance", "Phone", "Internet"]
             .iter()
             .enumerate()
         {
-            let base = dates::add_days(&today, -200 + (i as i64));
+            let base = dates::add_days(&today, -65 + (i as i64));
             for n in 0..3 {
                 add_txn_with_merchant(
                     &conn,
@@ -320,7 +337,7 @@ mod tests {
                     &dates::add_months(&base, n),
                     -1000,
                     TransactionType::Purchase,
-                    None,
+                    Some("Bills"),
                     Some(merchant),
                 );
             }
@@ -338,7 +355,8 @@ mod tests {
             .unwrap();
         }
 
-        // Seed more transactions than the recent-transactions cap.
+        // Seed more transactions than the recent-transactions cap (also
+        // categorized, for the same reason as above).
         for i in 0..(RECENT_TRANSACTIONS_LIMIT + 3) {
             add_txn(
                 &conn,
@@ -346,7 +364,7 @@ mod tests {
                 &dates::add_days(&today, -(i as i64)),
                 -100,
                 TransactionType::Purchase,
-                None,
+                Some("Misc"),
             );
         }
 

@@ -4,6 +4,7 @@ mod backup;
 mod budgets;
 mod bulk;
 mod categories;
+mod data_health;
 mod dates;
 mod db;
 mod forecast;
@@ -21,10 +22,12 @@ mod reconciliation;
 mod recurring;
 mod recurring_occurrences;
 mod reports;
+mod review;
 mod rules;
 mod safe_to_spend;
 mod savings_goals;
 mod settings;
+mod signals;
 mod splits;
 mod tags;
 mod transactions;
@@ -155,6 +158,10 @@ pub fn run() {
             insights::get_merchant_detail,
             insights::get_cash_flow_insights,
             forecast::get_forecast,
+            review::list_review,
+            review::keep_duplicate_review_transaction,
+            data_health::get_data_health,
+            signals::get_signals,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Tauri application");

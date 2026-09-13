@@ -83,6 +83,20 @@ pub fn add_months(date: &str, months: i64) -> String {
     format_iso(NaiveDate::from_ymd_opt(year, month, day).expect("clamped date must be valid"))
 }
 
+/// The previous calendar month's range, truncated to the same elapsed-day
+/// count as `reference_date` within its own month - the one slice of
+/// Insights' frontend "same-point" period-comparison rule
+/// (`lib/period.ts::periodComparison`) that Financial Signals (Batch 9)
+/// need computed server-side for a single deterministic reference date
+/// (e.g. "Sep 1-13" compares against "Aug 1-13", never all of August).
+pub fn same_point_previous_month(reference_date: &str) -> (String, String) {
+    let month_start = start_of_month(reference_date);
+    let elapsed_days = days_between(&month_start, reference_date);
+    let previous_month_start = add_months(&month_start, -1);
+    let previous_month_to = add_days(&previous_month_start, elapsed_days);
+    (previous_month_start, previous_month_to)
+}
+
 /// Constructs `day` within the same month as `date_in_month`, clamped to
 /// that month's length - e.g. `day_in_month("2026-02-10", 31) == "2026-02-28"`.
 pub fn day_in_month(date_in_month: &str, day: u32) -> String {
@@ -136,6 +150,28 @@ mod tests {
         assert_eq!(add_months("2026-01-15", -1), "2025-12-15");
         assert_eq!(add_months("2026-06-15", 12), "2027-06-15");
         assert_eq!(add_months("2026-06-15", -18), "2024-12-15");
+    }
+
+    #[test]
+    fn same_point_previous_month_truncates_to_the_same_elapsed_days() {
+        assert_eq!(
+            same_point_previous_month("2026-09-13"),
+            ("2026-08-01".to_string(), "2026-08-13".to_string())
+        );
+        // First of the month: zero days elapsed either side.
+        assert_eq!(
+            same_point_previous_month("2026-09-01"),
+            ("2026-08-01".to_string(), "2026-08-01".to_string())
+        );
+        // The invariant that actually matters (section 32's fairness rule):
+        // the same number of days have elapsed on both sides, even across a
+        // short February - never a hand-picked literal that could mask an
+        // off-by-one.
+        let (prev_from, prev_to) = same_point_previous_month("2026-03-30");
+        assert_eq!(
+            days_between(&prev_from, &prev_to),
+            days_between("2026-03-01", "2026-03-30")
+        );
     }
 
     #[test]

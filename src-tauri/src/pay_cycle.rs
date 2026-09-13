@@ -223,7 +223,12 @@ fn today(conn: &Connection) -> rusqlite::Result<String> {
 /// both `obligations_before` and `likely_income_series` read through this
 /// rather than `recurring::list` directly - otherwise a series left over
 /// from before an account was archived would silently keep counting.
-fn active_account_series(conn: &Connection) -> Result<Vec<RecurringSeries>, PayCycleError> {
+/// `pub(crate)` (Batch 9) - Review Center's own derived recurring items
+/// need the exact same filter, so an archived account's stale proposed/
+/// missed patterns don't clutter the active review queue either.
+pub(crate) fn active_account_series(
+    conn: &Connection,
+) -> Result<Vec<RecurringSeries>, PayCycleError> {
     let active_account_ids: std::collections::HashSet<i64> = crate::accounts::list(conn, false)
         .map_err(|e| PayCycleError::Other(e.to_string()))?
         .into_iter()
