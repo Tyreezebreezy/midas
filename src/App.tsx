@@ -2,11 +2,11 @@ import { useEffect, useState } from "react";
 import "./App.css";
 import AccountsPage from "./AccountsPage";
 import BudgetsPage from "./BudgetsPage";
+import ForecastPage from "./ForecastPage";
+import InsightsPage from "./InsightsPage";
 import NeedsReviewPage from "./NeedsReviewPage";
-import NetWorthPage from "./NetWorthPage";
 import OverviewPage from "./OverviewPage";
 import RecurringPage from "./RecurringPage";
-import ReportsPage from "./ReportsPage";
 import SavingsGoalsPage from "./SavingsGoalsPage";
 import SettingsPage from "./SettingsPage";
 import TransactionsPage from "./TransactionsPage";
@@ -23,8 +23,8 @@ export type Tab =
   | "budgets"
   | "bills"
   | "goals"
-  | "reports"
-  | "networth"
+  | "insights"
+  | "forecast"
   | "review"
   | "settings";
 
@@ -51,8 +51,8 @@ const navGroups: {
   {
     label: "Insights",
     items: [
-      { id: "reports", label: "Reports" },
-      { id: "networth", label: "Net Worth" },
+      { id: "insights", label: "Insights" },
+      { id: "forecast", label: "Forecast" },
     ],
   },
   { label: "Review", items: [{ id: "review", label: "Needs Review" }] },
@@ -163,8 +163,8 @@ function App() {
           {tab === "budgets" && <BudgetsPage />}
           {tab === "bills" && <RecurringPage onNavigate={setTab} />}
           {tab === "goals" && <SavingsGoalsPage />}
-          {tab === "reports" && <ReportsPage />}
-          {tab === "networth" && <NetWorthPage />}
+          {tab === "insights" && <InsightsPage />}
+          {tab === "forecast" && <ForecastPage />}
           {tab === "review" && <NeedsReviewPage />}
           {tab === "settings" && (
             <SettingsPage

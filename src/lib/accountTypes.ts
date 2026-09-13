@@ -42,6 +42,14 @@ export const LIABILITY_TYPES: ReadonlySet<AccountType> = new Set([
   "other_liability",
 ]);
 
+// Genuinely liquid cash - the same set Safe to Spend and the deterministic
+// Forecast (Batch 8) both treat as eligible. Never available credit.
+export const CASH_TYPES: ReadonlySet<AccountType> = new Set([
+  "checking",
+  "savings",
+  "cash",
+]);
+
 // ADR-0004: amount_cents is signed relative to the effect on the account's
 // OWN balance, never "was this spending" - uniformly for every account
 // type. For an asset account, the everyday meaning of "money in"/"money

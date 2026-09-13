@@ -594,9 +594,24 @@ export const accountingApi = {
     }),
   getNetWorth: () => invoke<NetWorthBreakdown>("get_net_worth"),
   getNetWorthHistory: () => invoke<NetWorthPoint[]>("get_net_worth_history"),
+  getNetWorthChange: (from: string, to: string) =>
+    invoke<NetWorthChange>("get_net_worth_change", { from, to }),
   getTotalSpending: (filter: TransactionFilter) =>
     invoke<number>("get_total_spending", { filter }),
 };
+
+export interface AccountContribution {
+  account_id: number;
+  name: string;
+  change_cents: number;
+}
+
+export interface NetWorthChange {
+  start_cents: number;
+  end_cents: number;
+  change_cents: number;
+  contributions: AccountContribution[];
+}
 
 // --- Budgets (Phase 4B, matured into Budget Intelligence in Batch 7) ---
 export type BudgetClassification = "fixed" | "flexible" | "discretionary";
@@ -1018,4 +1033,129 @@ export const bulkApi = {
     invoke<BulkResult>("bulk_add_tag", { ids, tagId }),
   removeTag: (ids: number[], tagId: number) =>
     invoke<BulkResult>("bulk_remove_tag", { ids, tagId }),
+};
+
+// --- Insights (Batch 8, specs/phase-015) ---
+export interface SpendingInsights {
+  total_cents: number;
+  one_time_cents: number;
+  recurring_cents: number;
+  non_recurring_cents: number;
+  categories: CategoryTotal[];
+}
+
+export interface CategoryDetail {
+  category: string;
+  spent_cents: number;
+  previous_spent_cents: number;
+  typical_cents: number | null;
+  typical_months_of_history: number;
+  transaction_count: number;
+  one_time_cents: number;
+}
+
+export interface PayeeTotal {
+  payee_id: number | null;
+  name: string;
+  amount_cents: number;
+  transaction_count: number;
+}
+
+export interface IncomeInsights {
+  total_cents: number;
+  recurring_cents: number;
+  non_recurring_cents: number;
+  sources: PayeeTotal[];
+}
+
+export interface CategoryShare {
+  category: string;
+  amount_cents: number;
+}
+
+export interface MerchantDetail {
+  name: string;
+  spent_cents: number;
+  previous_spent_cents: number;
+  transaction_count: number;
+  average_cents: number;
+  categories: CategoryShare[];
+  is_recurring: boolean;
+}
+
+export interface CashFlowInsights {
+  income_cents: number;
+  spending_cents: number;
+  net_cents: number;
+}
+
+export const insightsApi = {
+  getSpendingInsights: (from: string, to: string) =>
+    invoke<SpendingInsights>("get_spending_insights", { from, to }),
+  getCategoryDetail: (
+    category: string,
+    from: string,
+    to: string,
+    previousFrom: string,
+    previousTo: string,
+  ) =>
+    invoke<CategoryDetail>("get_category_detail", {
+      category,
+      from,
+      to,
+      previousFrom,
+      previousTo,
+    }),
+  getIncomeInsights: (from: string, to: string) =>
+    invoke<IncomeInsights>("get_income_insights", { from, to }),
+  getTopMerchants: (from: string, to: string) =>
+    invoke<PayeeTotal[]>("get_top_merchants", { from, to }),
+  getMerchantDetail: (
+    payeeId: number | null,
+    merchant: string | null,
+    from: string,
+    to: string,
+    previousFrom: string,
+    previousTo: string,
+  ) =>
+    invoke<MerchantDetail>("get_merchant_detail", {
+      payeeId,
+      merchant,
+      from,
+      to,
+      previousFrom,
+      previousTo,
+    }),
+  getCashFlowInsights: (from: string, to: string) =>
+    invoke<CashFlowInsights>("get_cash_flow_insights", { from, to }),
+};
+
+// --- Forecast (Batch 8, specs/phase-015) ---
+export type Certainty = "expected" | "estimated";
+
+export interface ProjectedEvent {
+  date: string;
+  label: string;
+  amount_cents: number;
+  certainty: Certainty;
+  projected_balance_cents: number;
+}
+
+export interface ReserveWarning {
+  reserve_cents: number;
+  date: string;
+}
+
+export interface ForecastResult {
+  current_balance_cents: number;
+  events: ProjectedEvent[];
+  ending_balance_cents: number;
+  lowest_balance_cents: number;
+  lowest_balance_date: string;
+  reserve_warning: ReserveWarning | null;
+}
+
+export const forecastApi = {
+  getForecast: (accountIds: number[], horizonDays: number) =>
+    invoke<ForecastResult>("get_forecast", { accountIds, horizonDays }),
 };
