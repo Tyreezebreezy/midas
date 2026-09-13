@@ -67,8 +67,7 @@ important architectural decision in the whole batch):
   next expected date, status, lifecycle flags. Detected or manually created,
   identical model either way (`create_manual` and `detect_candidates` write
   the same table through the same columns).
-- **`RecurringOccurrence`** (`recurring_occurrences.rs`, new table, migration
-  0013) - a projection of one future or past expected instance of a series.
+- **`RecurringOccurrence`** (`recurring_occurrences.rs`, new table, migration 0013) - a projection of one future or past expected instance of a series.
   Has no effect on any balance, budget, or reconciliation. Generated lazily
   to a rolling 90-day horizon (`HORIZON_DAYS`), never a background job, and
   idempotently (`INSERT OR IGNORE` + `UNIQUE(series_id, expected_date)`) so
@@ -148,7 +147,7 @@ Two deliberately different amount tolerances:
 
 **Kind heuristic** (added after native verification surfaced a real gap -
 see "Native verification" below): a freshly-detected expense pattern
-defaults to `Kind::Bill` if its evidence only passed the *wider*
+defaults to `Kind::Bill` if its evidence only passed the _wider_
 `detection_tolerance` and would not also have passed the narrower
 `amount_tolerance` - i.e. its amounts genuinely move around from cycle to
 cycle - and to `Kind::Other` otherwise. This is deterministic and tied to
@@ -174,8 +173,8 @@ variable pattern and as the price-change comparison baseline). No mean, no
 weighted average, no forecasting - median is robust to one outlier month
 without needing a separate outlier-detection step.
 
-Price-change detection (`hydrate`) compares the *latest* linked amount
-against the median of every *prior* linked amount - never a value frozen at
+Price-change detection (`hydrate`) compares the _latest_ linked amount
+against the median of every _prior_ linked amount - never a value frozen at
 first detection, which would drift stale as a pattern ages - and is
 suppressed entirely for `Kind::Bill` (normal utility variation is not a
 "price change") and for fewer than 2 prior occurrences (nothing to compare
@@ -216,7 +215,7 @@ therefore automatically excluded from ever appearing as a recurring bill,
 with a live-verified regression test proving it (`transfer_transactions_
 never_auto_match`, `transfers_are_never_proposed_as_a_recurring_pattern`).
 
-A recurring *charge* on a credit card is still correctly classified as an
+A recurring _charge_ on a credit card is still correctly classified as an
 expense despite `amount_cents` being positive under ADR-0004 (a charge
 increases what's owed) - `Direction::from_amount(amount_cents, is_liability)`
 mirrors the exact account-type-aware logic Batch 5.1 established for manual
@@ -269,7 +268,7 @@ surfaced on the existing Needs Review page with a per-candidate "This is
 occurrences (`link_occurrence_to_transaction` refuses a second link).
 
 **A real bug was found and fixed during native verification here**: when
-the owner picked one candidate, the *other* flagged occurrence(s) had no
+the owner picked one candidate, the _other_ flagged occurrence(s) had no
 path back out of `NeedsReview` - they stayed stranded forever, invisible to
 both future matching and the Upcoming/Calendar views. Fixed with
 `revert_other_ambiguous_candidates`, called after a successful link: it
@@ -307,8 +306,9 @@ table as detection - no separate "Bills engine." A pattern editor
 amount/next-date/notes (`update_pattern`/`PatternEditInput`) without
 exposing any internal threshold (`detection_tolerance`, `amount_tolerance`,
 etc. are never surfaced). Once edited, the owner's values are authoritative
+
 - `detect_candidates` already skips any merchant/payee with an existing row
-of any status, so detection can never silently overwrite an edit.
+  of any status, so detection can never silently overwrite an edit.
 
 Direction and account are intentionally **not** part of the general edit
 path: changing either mid-life would silently rewrite what a pattern's
@@ -517,7 +517,7 @@ mobile, CITADEL sync, notification infrastructure, subscription-cancellation
 services. Recurring-transfer management UI (the data model supports
 `Direction::Transfer` defensively; no creation UI was built for it, since it
 wasn't a named deliverable and the handoff's own transfer requirements are
-about *exclusion*, not a dedicated management surface).
+about _exclusion_, not a dedicated management surface).
 
 ## Acceptance criteria
 
