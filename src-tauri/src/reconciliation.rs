@@ -1201,6 +1201,37 @@ mod tests {
         assert!(result.is_ok(), "{result:?}");
     }
 
+    // Batch 5.1, section 11: preview() itself (not just complete()) had no
+    // liability-account coverage combining an opening balance, a purchase,
+    // a refund, and a payment together - the full statement-reconciliation
+    // matrix a real cardholder's month actually looks like.
+    #[test]
+    fn preview_reaches_zero_difference_for_a_credit_card_opening_purchase_refund_and_payment() {
+        let conn = test_conn();
+        let card = make_account(&conn, AccountType::CreditCard);
+        let opening = add_txn(
+            &conn,
+            card,
+            "2026-07-31",
+            20_000,
+            TransactionType::OpeningBalance,
+        );
+        let purchase = add_txn(&conn, card, "2026-08-05", 8_422, TransactionType::Purchase);
+        let refund = add_txn(&conn, card, "2026-08-12", -3_000, TransactionType::Refund);
+        let payment = add_txn(&conn, card, "2026-08-20", -5_000, TransactionType::Transfer);
+        clear(&conn, purchase);
+        clear(&conn, refund);
+        clear(&conn, payment);
+        let _ = opening; // opening_balance always counts, regardless of clearing state
+
+        let result = preview(&conn, card, "2026-08-01", "2026-08-31", 20_422).unwrap();
+        assert_eq!(
+            result.cleared_balance_cents, 20_422,
+            "20,000 opening + 8,422 charged - 3,000 refunded - 5,000 paid"
+        );
+        assert_eq!(result.difference_cents, 0, "ready to reconcile");
+    }
+
     #[test]
     fn completing_reconciliation_also_links_a_balance_adjustment_dated_within_the_period() {
         let mut conn = test_conn();

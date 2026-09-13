@@ -529,6 +529,49 @@ mod tests {
         assert_eq!(budgets[0].actual_amount_cents, 15000);
     }
 
+    // Batch 5.1: budgets.rs had zero liability-account coverage - a
+    // credit-card purchase's positive amount_cents must still count once,
+    // correctly, against its category budget, and the payment that later
+    // pays the card off must never count a second time.
+    #[test]
+    fn credit_card_purchases_count_against_budget_once_and_payments_never_do() {
+        let conn = test_conn();
+        let card = accounts::create(
+            &conn,
+            &AccountInput {
+                name: "Test Card".to_string(),
+                institution: None,
+                account_type: AccountType::CreditCard,
+                include_in_net_worth: true,
+                notes: None,
+            },
+        )
+        .unwrap()
+        .id;
+        create(&conn, &sample_input()).unwrap(); // Groceries / 2026-08-01
+
+        add_txn(
+            &conn,
+            card,
+            "2026-08-05",
+            8422,
+            TransactionType::Purchase,
+            "Groceries",
+        );
+        add_txn(
+            &conn,
+            card,
+            "2026-08-20",
+            -8422,
+            TransactionType::Transfer,
+            "Groceries",
+        );
+
+        let budgets = list_for_month(&conn, "2026-08-01").unwrap();
+        assert_eq!(budgets.len(), 1);
+        assert_eq!(budgets[0].actual_amount_cents, 8422);
+    }
+
     #[test]
     fn budget_calculations_exclude_transfers_and_account_for_refunds() {
         let conn = test_conn();

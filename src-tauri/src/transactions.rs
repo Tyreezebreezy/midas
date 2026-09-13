@@ -1088,6 +1088,67 @@ mod tests {
         assert_ne!(card_tx.transaction_type, TransactionType::Purchase);
     }
 
+    // Batch 5.1, section 7: editing a transaction across account types must
+    // never leave it with the previous account's sign semantics baked in -
+    // the caller (the frontend, per ADR-0004/lib/accountTypes.ts) is
+    // responsible for recomputing amount_cents for the *new* account before
+    // calling update(), and this proves the backend simply stores and
+    // reports whatever it's given, with no stale per-account-type residue
+    // surviving the switch.
+    #[test]
+    fn update_moving_a_transaction_from_checking_to_a_credit_card_uses_the_new_accounts_balance() {
+        let conn = test_conn();
+        let checking_id = make_account(&conn, AccountType::Checking);
+        let card_id = make_account(&conn, AccountType::CreditCard);
+
+        // A $50 purchase entered on checking: negative, per ADR-0004.
+        let created = create(
+            &conn,
+            &TransactionInput {
+                amount_cents: -5000,
+                ..sample_input(checking_id)
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            accounts::get(&conn, checking_id)
+                .unwrap()
+                .unwrap()
+                .balance_cents,
+            -5000
+        );
+
+        // Moved to the credit card as the same real-world purchase: the
+        // correctly-signed value for a liability is positive, and the
+        // caller (matching what the fixed TransactionForm now does) sends
+        // exactly that when the account changes.
+        update(
+            &conn,
+            created.id,
+            &TransactionInput {
+                account_id: card_id,
+                amount_cents: 5000,
+                ..sample_input(card_id)
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            accounts::get(&conn, checking_id)
+                .unwrap()
+                .unwrap()
+                .balance_cents,
+            0
+        );
+        assert_eq!(
+            accounts::get(&conn, card_id)
+                .unwrap()
+                .unwrap()
+                .balance_cents,
+            5000
+        );
+    }
+
     #[test]
     fn refund_is_not_income_by_default_classification() {
         let conn = test_conn();

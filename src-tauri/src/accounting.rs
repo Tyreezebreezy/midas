@@ -495,6 +495,95 @@ mod tests {
         );
     }
 
+    // Batch 5.1, section 9: manual entry and CSV/OFX import must converge on
+    // the same canonical semantics - there is no backend-visible difference
+    // between them (the sign is decided by the caller before create() is
+    // ever reached, identically to how CSV/OFX already work), so a manually
+    // entered credit-card purchase and an imported one carrying the exact
+    // same real-world amount must produce byte-identical balance/net-worth/
+    // spending effects, whether or not source_import_id is set.
+    #[test]
+    fn manual_and_imported_credit_card_purchases_produce_identical_ledger_effects() {
+        let conn = test_conn();
+        let manual_card = make_account(&conn, AccountType::CreditCard);
+        let imported_card = make_account(&conn, AccountType::CreditCard);
+
+        // "Manual" - as TransactionForm.tsx now computes it via
+        // lib/accountTypes.ts::signedAmountCents for a liability account.
+        let manual = transactions::create(
+            &conn,
+            &TransactionInput {
+                account_id: manual_card,
+                transaction_date: "2026-04-01".to_string(),
+                posted_date: None,
+                amount_cents: 8422,
+                transaction_type: TransactionType::Purchase,
+                raw_description: "Restaurant".to_string(),
+                merchant: None,
+                category: None,
+                subcategory: None,
+                notes: None,
+                tags: None,
+                is_pending: None,
+                payee_id: None,
+                is_one_time: false,
+            },
+        )
+        .unwrap();
+
+        // "Imported" - as import.rs::default_transaction_type computes it
+        // for the same real-world amount on a liability account, then
+        // tagged with a source_import_id the way a real commit would.
+        let imported = transactions::create(
+            &conn,
+            &TransactionInput {
+                account_id: imported_card,
+                transaction_date: "2026-04-01".to_string(),
+                posted_date: None,
+                amount_cents: 8422,
+                transaction_type: TransactionType::Purchase,
+                raw_description: "Restaurant".to_string(),
+                merchant: None,
+                category: None,
+                subcategory: None,
+                notes: None,
+                tags: None,
+                is_pending: None,
+                payee_id: None,
+                is_one_time: false,
+            },
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO imports (account_id, source_filename, file_hash, row_count, committed_count, duplicate_count, needs_review_count, column_mapping_json)
+             VALUES (?1, 'test.csv', 'hash', 1, 1, 0, 0, '{}')",
+            [imported_card],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE transactions SET source_import_id = 1 WHERE id = ?1",
+            [imported.id],
+        )
+        .unwrap();
+
+        assert_eq!(manual.amount_cents, imported.amount_cents);
+        assert_eq!(
+            balance_of(&conn, manual_card),
+            balance_of(&conn, imported_card)
+        );
+
+        let accounts = accounts::list(&conn, false).unwrap();
+        let breakdown = net_worth_breakdown(&accounts);
+        assert_eq!(breakdown.net_worth_cents, -8422 * 2);
+
+        let txns = transactions::list(&conn, &Default::default()).unwrap();
+        assert_eq!(
+            total_spending(&txns),
+            8422 * 2,
+            "both count as spending identically regardless of import provenance"
+        );
+    }
+
     #[test]
     fn transfers_never_count_as_spending() {
         let conn = test_conn();
@@ -596,6 +685,82 @@ mod tests {
         assert_eq!(breakdown.total_assets_cents, 3_620_000);
         assert_eq!(breakdown.total_liabilities_cents, 1_050_000);
         assert_eq!(breakdown.net_worth_cents, 3_620_000 - 1_050_000);
+    }
+
+    // Batch 5.1: manual entry previously computed a liability transaction's
+    // sign with no account-type awareness at all, so a purchase, a refund,
+    // and a payment could each land with the wrong sign depending on which
+    // "money in/out" direction a user picked - this is the Rust-side
+    // contract those signs must satisfy regardless of where they came from
+    // (manual entry, CSV, or OFX), exercising all three in one account
+    // history rather than one isolated transaction each.
+    #[test]
+    fn net_worth_reflects_a_full_purchase_refund_payment_cycle_on_a_credit_card() {
+        let conn = test_conn();
+        let checking = make_account(&conn, AccountType::Checking);
+        let card = make_account(&conn, AccountType::CreditCard);
+        add_txn(
+            &conn,
+            checking,
+            "2026-01-01",
+            100_000,
+            TransactionType::Income,
+        );
+
+        let accounts_before = accounts::list(&conn, false).unwrap();
+        assert_eq!(
+            net_worth_breakdown(&accounts_before).net_worth_cents,
+            100_000
+        );
+
+        // A $84.22 restaurant charge increases what's owed (positive) - net
+        // worth falls by exactly that much.
+        add_txn(&conn, card, "2026-01-05", 8_422, TransactionType::Purchase);
+        let accounts = accounts::list(&conn, false).unwrap();
+        assert_eq!(balance_of(&conn, card), 8_422);
+        assert_eq!(
+            net_worth_breakdown(&accounts).net_worth_cents,
+            100_000 - 8_422
+        );
+
+        // A $30.00 merchant refund/credit reduces what's owed (negative) -
+        // net worth improves, it never becomes ordinary income.
+        add_txn(&conn, card, "2026-01-10", -3_000, TransactionType::Refund);
+        let accounts = accounts::list(&conn, false).unwrap();
+        assert_eq!(balance_of(&conn, card), 5_422);
+        assert_eq!(
+            net_worth_breakdown(&accounts).net_worth_cents,
+            100_000 - 5_422
+        );
+        let txns = transactions::list(&conn, &Default::default()).unwrap();
+        assert_eq!(total_spending(&txns), 8_422 - 3_000); // net of the refund
+
+        // A $50.00 checking-to-card payment: cash falls, what's owed falls
+        // by the same amount - net worth is unchanged by the transfer
+        // itself (only timing/rounding already inherent in the ledger).
+        let net_worth_before_payment = net_worth_breakdown(&accounts).net_worth_cents;
+        add_txn(
+            &conn,
+            checking,
+            "2026-01-15",
+            -5_000,
+            TransactionType::Transfer,
+        );
+        add_txn(&conn, card, "2026-01-15", -5_000, TransactionType::Transfer);
+        let accounts = accounts::list(&conn, false).unwrap();
+        assert_eq!(balance_of(&conn, checking), 100_000 - 5_000);
+        assert_eq!(balance_of(&conn, card), 5_422 - 5_000);
+        assert_eq!(
+            net_worth_breakdown(&accounts).net_worth_cents,
+            net_worth_before_payment,
+            "a payment/transfer must never change net worth"
+        );
+        let txns = transactions::list(&conn, &Default::default()).unwrap();
+        assert_eq!(
+            total_spending(&txns),
+            8_422 - 3_000,
+            "the payment must never be double-counted as spending"
+        );
     }
 
     #[test]
@@ -1108,6 +1273,30 @@ mod tests {
         assert_eq!(history.last().unwrap().as_of_date, today);
         assert_eq!(history.last().unwrap().net_worth_cents, 50_000);
         // Every earlier point predates the deposit, so net worth was 0 then.
+        for point in &history[..6] {
+            assert_eq!(point.net_worth_cents, 0);
+        }
+    }
+
+    // Batch 5.1: net_worth_history's multi-month trend previously had no
+    // liability-account coverage at all - a credit-card charge must pull
+    // every point from that date forward down, not up.
+    #[test]
+    fn net_worth_history_reflects_a_credit_card_charge_from_its_date_forward() {
+        let conn = test_conn();
+        let checking = make_account(&conn, AccountType::Checking);
+        let card = make_account(&conn, AccountType::CreditCard);
+        let today = today_str(&conn);
+        let charge_date = dates::add_days(&today, -3);
+        add_txn(&conn, checking, &today, 100_000, TransactionType::Income);
+        add_txn(&conn, card, &charge_date, 20_000, TransactionType::Purchase);
+
+        let history = net_worth_history(&conn).unwrap();
+        assert_eq!(history.last().unwrap().net_worth_cents, 100_000 - 20_000);
+        // Every point before the charge saw only the $1,000 checking
+        // deposit, which is dated today - net worth was 0 back then either
+        // way, but critically it was never negative-then-positive or
+        // otherwise flipped by the liability's sign.
         for point in &history[..6] {
             assert_eq!(point.net_worth_cents, 0);
         }

@@ -285,6 +285,54 @@ mod tests {
         );
     }
 
+    // Batch 5.1: reports.rs had zero liability-account coverage at all - a
+    // credit-card purchase's positive amount_cents (ADR-0004) must still
+    // land in its category at the correct magnitude, not be excluded or
+    // double-signed just because a liability's own "up" is positive.
+    #[test]
+    fn spending_by_category_counts_a_credit_card_purchase_at_its_correct_positive_magnitude() {
+        let conn = test_conn();
+        let card = accounts::create(
+            &conn,
+            &AccountInput {
+                name: "Card".to_string(),
+                institution: None,
+                account_type: AccountType::CreditCard,
+                include_in_net_worth: true,
+                notes: None,
+            },
+        )
+        .unwrap()
+        .id;
+        add_txn(
+            &conn,
+            card,
+            "2026-08-05",
+            8422,
+            TransactionType::Purchase,
+            Some("Dining"),
+        );
+        // The payment leg of paying the card off must never appear as
+        // spending in any category.
+        add_txn(
+            &conn,
+            card,
+            "2026-08-20",
+            -8422,
+            TransactionType::Transfer,
+            Some("Dining"),
+        );
+
+        let totals = spending_by_category(&conn, "2026-08-01", "2026-08-31").unwrap();
+        assert_eq!(
+            totals,
+            vec![CategoryTotal {
+                category: "Dining".to_string(),
+                spent_cents: 8422,
+            }]
+        );
+    }
+
     #[test]
     fn spending_by_category_expands_a_split_transaction_into_its_childrens_categories() {
         let mut conn = test_conn();
