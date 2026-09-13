@@ -62,6 +62,19 @@ impl AccountType {
             AccountType::CreditCard | AccountType::Loan | AccountType::OtherLiability
         )
     }
+
+    /// Whether this account holds genuinely liquid cash - the one shared
+    /// definition `safe_to_spend::eligible_cash` and Batch 8's deterministic
+    /// Forecast both use (section 37: "do not treat available credit as
+    /// cash"). Kept as one method rather than two separate inline matches,
+    /// so the two can never quietly drift apart the way `spending_in_range`
+    /// and `spending_by_category` once did (Batch 7 reconnaissance).
+    pub fn is_eligible_cash(self) -> bool {
+        matches!(
+            self,
+            AccountType::Checking | AccountType::Savings | AccountType::Cash
+        )
+    }
 }
 
 /// Narrow lookup for callers (the import pipeline) that only need to know

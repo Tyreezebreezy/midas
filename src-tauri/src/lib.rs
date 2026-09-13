@@ -6,8 +6,10 @@ mod bulk;
 mod categories;
 mod dates;
 mod db;
+mod forecast;
 mod import;
 mod import_profiles;
+mod insights;
 mod money;
 mod needs_review;
 mod ofx;
@@ -87,6 +89,7 @@ pub fn run() {
             accounting::reconcile_account_balance,
             accounting::get_net_worth,
             accounting::get_net_worth_history,
+            accounting::get_net_worth_change,
             accounting::get_total_spending,
             budgets::list_budgets,
             budgets::create_budget,
@@ -145,6 +148,13 @@ pub fn run() {
             bulk::bulk_add_tag,
             bulk::bulk_remove_tag,
             rules::apply_correction_command,
+            insights::get_spending_insights,
+            insights::get_category_detail,
+            insights::get_income_insights,
+            insights::get_top_merchants,
+            insights::get_merchant_detail,
+            insights::get_cash_flow_insights,
+            forecast::get_forecast,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Tauri application");

@@ -120,8 +120,9 @@ const MIN_MONTHS_FOR_TYPICAL: usize = 2;
 /// budget suggestions (section 8 - documented default). Six rather than
 /// three: `historical_typical` uses a median (section 54), which benefits
 /// from a few more data points without letting ancient behavior dominate -
-/// six months is still "recent."
-const DEFAULT_LOOKBACK_MONTHS: i32 = 6;
+/// six months is still "recent." `pub(crate)` so Insights' category detail
+/// (Batch 8) uses this exact same default rather than a second hardcoded "6".
+pub(crate) const DEFAULT_LOOKBACK_MONTHS: i32 = 6;
 
 /// Safety cap on how far `rollover_in_for` will ever walk back through
 /// consecutive rollover-enabled months - purely defensive (a real chain
@@ -370,7 +371,11 @@ fn median(mut values: Vec<i64>) -> i64 {
 /// when fewer than `MIN_MONTHS_FOR_TYPICAL` qualifying months exist
 /// (section 53 - one data point is not a baseline), alongside however many
 /// qualifying months were actually found either way.
-fn historical_typical(
+/// `pub(crate)` (not just private) so Insights' category detail (Batch 8)
+/// can show the exact same "typical spending" figure the Budgets page does
+/// for that category, rather than a second, possibly-divergent definition
+/// of "typical" (section 14: "do not create conflicting definitions").
+pub(crate) fn historical_typical(
     conn: &Connection,
     category: &str,
     target_month: &str,
@@ -382,7 +387,8 @@ fn historical_typical(
         cursor = dates::add_months(&cursor, -1);
         let from = dates::start_of_month(&cursor);
         let to = dates::end_of_month(&cursor);
-        let total = accounting::spending_in_range_excluding_one_time(conn, category, &from, &to)?;
+        let total =
+            accounting::spending_in_range_excluding_one_time(conn, Some(category), &from, &to)?;
         if total != 0 {
             monthly_totals.push(total);
         }

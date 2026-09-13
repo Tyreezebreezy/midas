@@ -109,21 +109,22 @@ pub fn spending_in_range(
         .sum())
 }
 
-/// Like `spending_in_range` scoped to one category, but excluding any
-/// transaction (or split of one) flagged `is_one_time` - a historical
-/// baseline's own "what's typical here" question, never official actual
-/// spending (which always includes every real transaction; see
-/// `budgets::historical_typical`, the only caller).
+/// Like `spending_in_range`, but excluding any transaction (or split of one)
+/// flagged `is_one_time` - a historical baseline's own "what's typical here"
+/// question, never official actual spending (which always includes every
+/// real transaction). `category = None` gives the all-categories ordinary-
+/// spending total Insights' one-time breakdown needs (section 13); `Some`
+/// scopes it the way `budgets::historical_typical` always has.
 pub fn spending_in_range_excluding_one_time(
     conn: &Connection,
-    category: &str,
+    category: Option<&str>,
     from: &str,
     to: &str,
 ) -> rusqlite::Result<i64> {
     let rows = split_expanded_rows(conn, from, to)?;
     Ok(rows
         .into_iter()
-        .filter(|(cat, _, _, is_one_time)| cat == category && !is_one_time)
+        .filter(|(cat, _, _, is_one_time)| category.is_none_or(|c| cat == c) && !is_one_time)
         .map(|(_, amount_cents, transaction_type, _)| {
             spending_effect(transaction_type, amount_cents)
         })
@@ -178,31 +179,122 @@ pub fn net_worth_breakdown(accounts: &[Account]) -> NetWorthBreakdown {
     }
 }
 
-/// Net worth as of a past date: each included, non-archived account's
-/// balance is recomputed from only the transactions dated on or before
-/// `as_of_date` - the same "balance = sum of transactions" principle
-/// `accounts::get` uses for the current balance, just anchored to a past
-/// point. An account with no transactions yet at that date contributes 0,
-/// which is correct (nothing to backfill or guess).
-fn net_worth_as_of(conn: &Connection, as_of_date: &str) -> rusqlite::Result<i64> {
+struct AccountBalanceAt {
+    account_id: i64,
+    name: String,
+    account_type: crate::accounts::AccountType,
+    balance_cents: i64,
+}
+
+/// Every included, non-archived account's own raw ledger balance
+/// (`SUM(amount_cents)`, un-flipped for liabilities) as of a past date -
+/// the same "balance = sum of transactions" principle `accounts::get` uses
+/// for the current balance, just anchored to a past point and returned per
+/// account rather than pre-summed, so both `net_worth_as_of` (below) and
+/// Insights' per-account contribution breakdown (Batch 8, section 29) are
+/// built on the one shared query instead of two that could disagree.
+fn account_balances_as_of(
+    conn: &Connection,
+    as_of_date: &str,
+) -> rusqlite::Result<Vec<AccountBalanceAt>> {
     let mut stmt = conn.prepare(
-        "SELECT a.account_type, COALESCE(SUM(t.amount_cents), 0) FROM accounts a
+        "SELECT a.id, a.name, a.account_type, COALESCE(SUM(t.amount_cents), 0) FROM accounts a
          LEFT JOIN transactions t
              ON t.account_id = a.id AND t.is_archived = 0 AND t.transaction_date <= ?1
          WHERE a.is_archived = 0 AND a.include_in_net_worth = 1
          GROUP BY a.id",
     )?;
     let rows = stmt.query_map(params![as_of_date], |row| {
-        let account_type = crate::accounts::AccountType::from_sql_str(&row.get::<_, String>(0)?)?;
-        let balance: i64 = row.get(1)?;
-        Ok(if account_type.is_liability() {
-            -balance
-        } else {
-            balance
+        Ok(AccountBalanceAt {
+            account_id: row.get(0)?,
+            name: row.get(1)?,
+            account_type: crate::accounts::AccountType::from_sql_str(&row.get::<_, String>(2)?)?,
+            balance_cents: row.get(3)?,
         })
     })?;
-    rows.collect::<rusqlite::Result<Vec<i64>>>()
-        .map(|v| v.iter().sum())
+    rows.collect()
+}
+
+/// Net worth as of a past date - included assets minus included liabilities,
+/// exactly `net_worth_breakdown`'s own rule, just anchored to a past point
+/// via `account_balances_as_of` instead of the accounts' current balances.
+fn net_worth_as_of(conn: &Connection, as_of_date: &str) -> rusqlite::Result<i64> {
+    Ok(account_balances_as_of(conn, as_of_date)?
+        .iter()
+        .map(|a| {
+            if a.account_type.is_liability() {
+                -a.balance_cents
+            } else {
+                a.balance_cents
+            }
+        })
+        .sum())
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AccountContribution {
+    pub account_id: i64,
+    pub name: String,
+    /// This account's own share of `NetWorthChange::change_cents` - already
+    /// expressed as a net-worth impact (positive helps, negative hurts), not
+    /// a raw balance delta, so a liability that grew (more owed) correctly
+    /// shows as negative even though its own `amount_cents` moved positive
+    /// (section 29).
+    pub change_cents: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct NetWorthChange {
+    pub start_cents: i64,
+    pub end_cents: i64,
+    pub change_cents: i64,
+    pub contributions: Vec<AccountContribution>,
+}
+
+/// Net worth's change over `[from, to]` (section 24/29) - `from` is
+/// evaluated the day *before* the period starts, so a transaction dated on
+/// the period's own first day counts toward the change, matching how every
+/// other Insights range already treats its `from` bound as inclusive.
+pub fn net_worth_change(
+    conn: &Connection,
+    from: &str,
+    to: &str,
+) -> rusqlite::Result<NetWorthChange> {
+    let start_date = dates::add_days(from, -1);
+    let start_balances = account_balances_as_of(conn, &start_date)?;
+    let end_balances = account_balances_as_of(conn, to)?;
+
+    let signed = |a: &AccountBalanceAt| -> i64 {
+        if a.account_type.is_liability() {
+            -a.balance_cents
+        } else {
+            a.balance_cents
+        }
+    };
+    let start_cents: i64 = start_balances.iter().map(signed).sum();
+    let end_cents: i64 = end_balances.iter().map(signed).sum();
+
+    let mut contributions = Vec::new();
+    for end in &end_balances {
+        let start_signed = start_balances
+            .iter()
+            .find(|s| s.account_id == end.account_id)
+            .map(signed)
+            .unwrap_or(0);
+        contributions.push(AccountContribution {
+            account_id: end.account_id,
+            name: end.name.clone(),
+            change_cents: signed(end) - start_signed,
+        });
+    }
+    contributions.sort_by_key(|c| std::cmp::Reverse(c.change_cents));
+
+    Ok(NetWorthChange {
+        start_cents,
+        end_cents,
+        change_cents: end_cents - start_cents,
+        contributions,
+    })
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -368,6 +460,16 @@ pub fn get_net_worth_history(
 ) -> Result<Vec<NetWorthPoint>, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     net_worth_history(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_net_worth_change(
+    state: tauri::State<crate::db::DbState>,
+    from: String,
+    to: String,
+) -> Result<NetWorthChange, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    net_worth_change(&conn, &from, &to).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1521,5 +1623,118 @@ mod tests {
         );
         let spending_all_categories = spending_in_range(&conn, None, &today, &today).unwrap();
         assert_eq!(spending_all_categories, 2000);
+    }
+
+    // --- Batch 8: net worth change over a period, with per-account contributions ---
+
+    #[test]
+    fn net_worth_change_reports_start_end_and_contributions_that_sum_to_the_total() {
+        let conn = test_conn();
+        let checking = make_account(&conn, AccountType::Checking);
+        let card = make_account(&conn, AccountType::CreditCard);
+        add_txn(
+            &conn,
+            checking,
+            "2026-07-15",
+            100_000,
+            TransactionType::Income,
+        );
+
+        // Both land inside the period.
+        add_txn(
+            &conn,
+            checking,
+            "2026-08-10",
+            60_000,
+            TransactionType::Income,
+        );
+        add_txn(&conn, card, "2026-08-12", 28_000, TransactionType::Purchase);
+
+        let change = net_worth_change(&conn, "2026-08-01", "2026-08-31").unwrap();
+        assert_eq!(
+            change.start_cents, 100_000,
+            "checking's balance before the period began"
+        );
+        assert_eq!(change.end_cents, 100_000 + 60_000 - 28_000);
+        assert_eq!(change.change_cents, 60_000 - 28_000);
+
+        let checking_contribution = change
+            .contributions
+            .iter()
+            .find(|c| c.account_id == checking)
+            .unwrap();
+        assert_eq!(checking_contribution.change_cents, 60_000);
+        let card_contribution = change
+            .contributions
+            .iter()
+            .find(|c| c.account_id == card)
+            .unwrap();
+        assert_eq!(
+            card_contribution.change_cents, -28_000,
+            "a credit card owing $280 more must show as a NEGATIVE net-worth contribution"
+        );
+
+        let contribution_sum: i64 = change.contributions.iter().map(|c| c.change_cents).sum();
+        assert_eq!(
+            contribution_sum, change.change_cents,
+            "contributions must always sum to exactly the reported change"
+        );
+    }
+
+    #[test]
+    fn net_worth_change_excludes_accounts_not_included_in_net_worth() {
+        let conn = test_conn();
+        let checking = make_account(&conn, AccountType::Checking);
+        add_txn(
+            &conn,
+            checking,
+            "2026-08-05",
+            50_000,
+            TransactionType::Income,
+        );
+
+        let excluded = accounts::create(
+            &conn,
+            &AccountInput {
+                name: "Excluded".to_string(),
+                institution: None,
+                account_type: AccountType::Investment,
+                include_in_net_worth: false,
+                notes: None,
+            },
+        )
+        .unwrap();
+        add_txn(
+            &conn,
+            excluded.id,
+            "2026-08-05",
+            9_999_999,
+            TransactionType::Income,
+        );
+
+        let change = net_worth_change(&conn, "2026-08-01", "2026-08-31").unwrap();
+        assert_eq!(change.change_cents, 50_000);
+        assert!(change
+            .contributions
+            .iter()
+            .all(|c| c.account_id != excluded.id));
+    }
+
+    #[test]
+    fn net_worth_change_with_no_activity_in_the_period_is_zero() {
+        let conn = test_conn();
+        let checking = make_account(&conn, AccountType::Checking);
+        add_txn(
+            &conn,
+            checking,
+            "2026-01-01",
+            100_000,
+            TransactionType::Income,
+        );
+
+        let change = net_worth_change(&conn, "2026-08-01", "2026-08-31").unwrap();
+        assert_eq!(change.start_cents, 100_000);
+        assert_eq!(change.end_cents, 100_000);
+        assert_eq!(change.change_cents, 0);
     }
 }

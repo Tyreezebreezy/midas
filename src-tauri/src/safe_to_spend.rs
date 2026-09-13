@@ -16,7 +16,7 @@ use rusqlite::Connection;
 use serde::Serialize;
 use tauri::State;
 
-use crate::accounts::{self, AccountType};
+use crate::accounts;
 use crate::db::DbState;
 use crate::pay_cycle;
 use crate::savings_goals;
@@ -75,12 +75,7 @@ fn eligible_cash(conn: &Connection) -> Result<i64, SafeToSpendError> {
         accounts::list(conn, false).map_err(|e| SafeToSpendError::Other(e.to_string()))?;
     Ok(accounts
         .iter()
-        .filter(|a| {
-            matches!(
-                a.account_type,
-                AccountType::Checking | AccountType::Savings | AccountType::Cash
-            )
-        })
+        .filter(|a| a.account_type.is_eligible_cash())
         .map(|a| a.balance_cents)
         .sum())
 }
@@ -153,7 +148,7 @@ pub fn set_safe_to_spend_reserve(state: State<DbState>, cents: i64) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::accounts::{self as accounts_mod, AccountInput};
+    use crate::accounts::{self as accounts_mod, AccountInput, AccountType};
     use crate::pay_cycle::{set_schedule, PaySchedule};
     use crate::recurring;
     use crate::savings_goals::{self, SavingsGoalInput};
