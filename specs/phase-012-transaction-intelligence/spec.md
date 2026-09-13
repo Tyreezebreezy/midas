@@ -82,8 +82,7 @@ re-inserting the full set on every edit (`replace_for_transaction`) keeps
 read with no incremental-update drift to reason about.
 
 `payees` (already existed, unused by any UI) gained a live `transaction_count`
-column (correlated subquery, non-archived transactions only). `tags` (Batch
-3) gained no schema changes - only a UI.
+column (correlated subquery, non-archived transactions only). `tags` (Batch 3) gained no schema changes - only a UI.
 
 ## Payees
 
