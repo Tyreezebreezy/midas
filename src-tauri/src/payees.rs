@@ -215,6 +215,47 @@ pub fn merge(conn: &Connection, source_id: i64, target_id: i64) -> Result<Payee,
          WHERE id = ?2",
         params![target_id, source_id],
     )?;
+
+    // Recurring evidence must follow the merge too (Batch 6, section 48), or
+    // a series left keyed to the now-archived source payee silently stops
+    // matching once a future transaction's raw merchant text no longer lines
+    // up with what detection captured - the whole reason payee_id exists
+    // instead of relying on that text forever. If the target already has its
+    // own recurring evidence, don't silently combine two potentially
+    // distinct patterns under one payee - surface it for a human decision.
+    let source_has_series: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM recurring_series WHERE payee_id = ?1)",
+        params![source_id],
+        |r| r.get(0),
+    )?;
+    if source_has_series {
+        let target_has_series: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM recurring_series WHERE payee_id = ?1)",
+            params![target_id],
+            |r| r.get(0),
+        )?;
+        if target_has_series {
+            conn.execute(
+                "INSERT INTO needs_review_items (issue_type, detected_reason, proposed_resolution_json)
+                 VALUES ('other', ?1, ?2)",
+                params![
+                    format!(
+                        "Merging payee \"{}\" into \"{}\" would combine two separate recurring patterns under one payee - review before they're treated as the same subscription/bill.",
+                        source.name, target.name
+                    ),
+                    format!(
+                        "{{\"kind\":\"payee_merge_recurring_conflict\",\"source_payee_id\":{source_id},\"target_payee_id\":{target_id}}}"
+                    ),
+                ],
+            )?;
+        } else {
+            conn.execute(
+                "UPDATE recurring_series SET payee_id = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE payee_id = ?2",
+                params![target_id, source_id],
+            )?;
+        }
+    }
+
     get(conn, source_id)?.ok_or(PayeeError::NotFound(source_id))
 }
 
@@ -283,6 +324,10 @@ mod tests {
             "../migrations/0012_transaction_intelligence.sql"
         ))
         .unwrap();
+        conn.execute_batch(include_str!(
+            "../migrations/0013_recurring_intelligence.sql"
+        ))
+        .unwrap();
         conn
     }
 
@@ -336,6 +381,22 @@ mod tests {
         )
         .unwrap();
         created.id
+    }
+
+    fn make_recurring_series(
+        conn: &Connection,
+        account_id: i64,
+        payee_id: i64,
+        merchant: &str,
+    ) -> i64 {
+        conn.query_row(
+            "INSERT INTO recurring_series (account_id, payee_id, merchant, cadence, expected_amount_cents, next_expected_date)
+             VALUES (?1, ?2, ?3, 'monthly', -999, '2026-01-01')
+             RETURNING id",
+            params![account_id, payee_id, merchant],
+            |r| r.get(0),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -480,5 +541,78 @@ mod tests {
             merge(&conn, c.id, a.id),
             Err(PayeeError::Validation(_))
         ));
+    }
+
+    #[test]
+    fn merge_repoints_recurring_series_to_the_target_payee_when_the_target_has_none_of_its_own() {
+        let conn = test_conn();
+        let account_id = make_account(&conn);
+        let source = create(&conn, &sample_input()).unwrap();
+        let mut target_input = sample_input();
+        target_input.name = "Whole Foods Market".to_string();
+        let target = create(&conn, &target_input).unwrap();
+        let series_id = make_recurring_series(&conn, account_id, source.id, "Whole Foods");
+
+        merge(&conn, source.id, target.id).unwrap();
+
+        let payee_id: Option<i64> = conn
+            .query_row(
+                "SELECT payee_id FROM recurring_series WHERE id = ?1",
+                params![series_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            payee_id,
+            Some(target.id),
+            "recurring evidence must follow the merge, not stay pinned to the archived payee"
+        );
+    }
+
+    #[test]
+    fn merge_surfaces_a_review_item_instead_of_silently_combining_two_distinct_recurring_series() {
+        let conn = test_conn();
+        let account_id = make_account(&conn);
+        let source = create(&conn, &sample_input()).unwrap();
+        let mut target_input = sample_input();
+        target_input.name = "Whole Foods Market".to_string();
+        let target = create(&conn, &target_input).unwrap();
+        let source_series = make_recurring_series(&conn, account_id, source.id, "Whole Foods");
+        let target_series =
+            make_recurring_series(&conn, account_id, target.id, "Whole Foods Market");
+
+        let before_review_count: i64 = conn
+            .query_row("SELECT count(*) FROM needs_review_items", [], |r| r.get(0))
+            .unwrap();
+
+        merge(&conn, source.id, target.id).unwrap();
+
+        let after_review_count: i64 = conn
+            .query_row("SELECT count(*) FROM needs_review_items", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            after_review_count,
+            before_review_count + 1,
+            "an overlap between two independently-evidenced patterns must be reviewed, not guessed"
+        );
+
+        // Neither series is silently rewritten - both keep their own
+        // payee_id until a human resolves the review item.
+        let source_payee: i64 = conn
+            .query_row(
+                "SELECT payee_id FROM recurring_series WHERE id = ?1",
+                params![source_series],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let target_payee: i64 = conn
+            .query_row(
+                "SELECT payee_id FROM recurring_series WHERE id = ?1",
+                params![target_series],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(source_payee, source.id);
+        assert_eq!(target_payee, target.id);
     }
 }

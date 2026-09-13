@@ -3,9 +3,17 @@ import type {
   Account,
   IssueType,
   NeedsReviewItem,
+  RecurringOccurrence,
   Transaction,
 } from "./api/midas";
-import { accountsApi, needsReviewApi, transactionsApi } from "./api/midas";
+import {
+  accountsApi,
+  needsReviewApi,
+  recurringApi,
+  transactionsApi,
+} from "./api/midas";
+import { formatCents } from "./lib/currency";
+import { formatDate } from "./lib/dateFormat";
 import TransactionForm from "./TransactionForm";
 
 const ISSUE_TYPE_LABELS: Record<IssueType, string> = {
@@ -29,6 +37,99 @@ function formatSourceRow(json: string | null): string {
   } catch {
     return json;
   }
+}
+
+// A handful of review items carry a machine-readable proposal in
+// proposed_resolution_json (recurring_occurrences.rs / payees.rs) instead of
+// (or alongside) a plain-English detected_reason - parsed defensively since
+// it's untyped JSON coming from the database, not a Rust-checked shape.
+function parseAmbiguousRecurringMatch(json: string | null): number[] | null {
+  if (!json) return null;
+  try {
+    const parsed = JSON.parse(json) as {
+      kind?: string;
+      occurrence_ids?: unknown;
+    };
+    if (
+      parsed.kind === "ambiguous_recurring_match" &&
+      Array.isArray(parsed.occurrence_ids)
+    ) {
+      return parsed.occurrence_ids.filter(
+        (id): id is number => typeof id === "number",
+      );
+    }
+  } catch {
+    // Not JSON, or not this shape - render as plain text instead.
+  }
+  return null;
+}
+
+function AmbiguousRecurringMatchResolver({
+  transactionId,
+  occurrenceIds,
+  onLinked,
+}: {
+  transactionId: number;
+  occurrenceIds: number[];
+  onLinked: () => void;
+}) {
+  const [candidates, setCandidates] = useState<RecurringOccurrence[] | null>(
+    null,
+  );
+  const [linking, setLinking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    Promise.all(occurrenceIds.map((id) => recurringApi.getOccurrence(id)))
+      .then((results) =>
+        setCandidates(
+          results.filter((o): o is RecurringOccurrence => o !== null),
+        ),
+      )
+      .catch((err) => setError(String(err)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function pick(occurrenceId: number) {
+    setLinking(true);
+    setError(null);
+    try {
+      await recurringApi.linkOccurrence(occurrenceId, transactionId);
+      onLinked();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLinking(false);
+    }
+  }
+
+  if (error) {
+    return (
+      <p className="form-error" role="alert">
+        {error}
+      </p>
+    );
+  }
+  if (candidates === null) {
+    return <p className="muted">Loading candidates…</p>;
+  }
+
+  return (
+    <div className="review-item-actions ambiguous-match-choices">
+      {candidates.map((c) => (
+        <button
+          key={c.id}
+          type="button"
+          className="btn-secondary"
+          disabled={linking}
+          onClick={() => pick(c.id)}
+        >
+          This is {formatDate(c.expected_date)} ·{" "}
+          {formatCents(Math.abs(c.expected_amount_cents))}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 function NeedsReviewPage() {
@@ -113,59 +214,73 @@ function NeedsReviewPage() {
         <p className="muted">Nothing needs your attention right now.</p>
       ) : (
         <ul className="review-list">
-          {items.map((item) => (
-            <li
-              key={item.id}
-              className={`review-item review-item-${item.resolution_status}`}
-            >
-              <div className="review-item-header">
-                <span className="badge-review">
-                  {ISSUE_TYPE_LABELS[item.issue_type]}
-                </span>
-                <span className="muted">{item.created_at.slice(0, 10)}</span>
-                {item.resolution_status !== "open" && (
-                  <span className="badge-archived">
-                    {item.resolution_status}
+          {items.map((item) => {
+            const ambiguousOccurrenceIds = parseAmbiguousRecurringMatch(
+              item.proposed_resolution_json,
+            );
+            return (
+              <li
+                key={item.id}
+                className={`review-item review-item-${item.resolution_status}`}
+              >
+                <div className="review-item-header">
+                  <span className="badge-review">
+                    {ISSUE_TYPE_LABELS[item.issue_type]}
                   </span>
+                  <span className="muted">{item.created_at.slice(0, 10)}</span>
+                  {item.resolution_status !== "open" && (
+                    <span className="badge-archived">
+                      {item.resolution_status}
+                    </span>
+                  )}
+                </div>
+                <p>{item.detected_reason}</p>
+                {item.source_row_json && (
+                  <p className="review-source muted">
+                    {formatSourceRow(item.source_row_json)}
+                  </p>
                 )}
-              </div>
-              <p>{item.detected_reason}</p>
-              {item.source_row_json && (
-                <p className="review-source muted">
-                  {formatSourceRow(item.source_row_json)}
-                </p>
-              )}
-              <div className="review-item-actions">
-                {item.transaction_id !== null && (
-                  <button
-                    type="button"
-                    className="btn-link"
-                    onClick={() => handleFix(item.transaction_id!)}
-                  >
-                    Fix transaction
-                  </button>
-                )}
-                {item.resolution_status === "open" && (
-                  <>
+                {item.resolution_status === "open" &&
+                  ambiguousOccurrenceIds !== null &&
+                  item.transaction_id !== null && (
+                    <AmbiguousRecurringMatchResolver
+                      transactionId={item.transaction_id}
+                      occurrenceIds={ambiguousOccurrenceIds}
+                      onLinked={() => resolve(item.id, "resolved")}
+                    />
+                  )}
+                <div className="review-item-actions">
+                  {item.transaction_id !== null && (
                     <button
                       type="button"
                       className="btn-link"
-                      onClick={() => resolve(item.id, "resolved")}
+                      onClick={() => handleFix(item.transaction_id!)}
                     >
-                      Mark resolved
+                      Fix transaction
                     </button>
-                    <button
-                      type="button"
-                      className="btn-link"
-                      onClick={() => resolve(item.id, "dismissed")}
-                    >
-                      Dismiss
-                    </button>
-                  </>
-                )}
-              </div>
-            </li>
-          ))}
+                  )}
+                  {item.resolution_status === "open" && (
+                    <>
+                      <button
+                        type="button"
+                        className="btn-link"
+                        onClick={() => resolve(item.id, "resolved")}
+                      >
+                        Mark resolved
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-link"
+                        onClick={() => resolve(item.id, "dismissed")}
+                      >
+                        Dismiss
+                      </button>
+                    </>
+                  )}
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
 
