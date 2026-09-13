@@ -152,6 +152,8 @@ mod tests {
             "../migrations/0013_recurring_intelligence.sql"
         ))
         .unwrap();
+        conn.execute_batch(include_str!("../migrations/0014_budget_intelligence.sql"))
+            .unwrap();
         conn
     }
 
@@ -262,6 +264,7 @@ mod tests {
                 month: dates::start_of_month(&today),
                 planned_amount_cents: 40000,
                 classification: Classification::Flexible,
+                rollover_enabled: false,
             },
         )
         .unwrap();

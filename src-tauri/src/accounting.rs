@@ -41,45 +41,93 @@ pub fn total_spending(transactions: &[Transaction]) -> i64 {
         .sum()
 }
 
-fn row_to_spending_effect(row: &rusqlite::Row) -> rusqlite::Result<i64> {
-    let amount_cents: i64 = row.get(0)?;
-    let transaction_type = TransactionType::from_sql_str(&row.get::<_, String>(1)?)?;
-    Ok(spending_effect(transaction_type, amount_cents))
+/// Every "spendable line" dated within `[from, to]` (inclusive): for a split
+/// transaction, one row per split (that split's own category and amount,
+/// never the parent's, but the *parent's* `is_one_time` - a split doesn't
+/// carry its own, the flag describes the whole transaction event); for an
+/// unsplit transaction, the transaction's own row. This is the one shared
+/// place that expands splits for a category total, reused by
+/// `spending_in_range` (below), `reports::spending_by_category`, and
+/// `budgets::historical_typical` so none of them can ever disagree about
+/// what a split transaction contributes to its categories (`Batch 5`
+/// originally gave Reports this UNION ALL directly; `spending_in_range`
+/// used to filter `transactions.category` alone, which is only ever the
+/// *pre-split* label and would silently misattribute or drop a split
+/// transaction's spending - found during Batch 7 reconnaissance, fixed here
+/// at the root for every category-scoped caller, budgets included).
+pub(crate) fn split_expanded_rows(
+    conn: &Connection,
+    from: &str,
+    to: &str,
+) -> rusqlite::Result<Vec<(String, i64, TransactionType, bool)>> {
+    let mut stmt = conn.prepare(
+        "SELECT COALESCE(s.category, 'Uncategorized'), s.amount_cents, t.transaction_type, t.is_one_time
+         FROM transactions t
+         JOIN transaction_splits s ON s.transaction_id = t.id
+         WHERE t.transaction_date >= ?1 AND t.transaction_date <= ?2 AND t.is_archived = 0
+         UNION ALL
+         SELECT COALESCE(t.category, 'Uncategorized'), t.amount_cents, t.transaction_type, t.is_one_time
+         FROM transactions t
+         WHERE t.transaction_date >= ?1 AND t.transaction_date <= ?2 AND t.is_archived = 0
+           AND NOT EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = t.id)",
+    )?;
+    let raw: Vec<(String, i64, String, bool)> = stmt
+        .query_map(params![from, to], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    raw.into_iter()
+        .map(|(category, amount_cents, type_str, is_one_time)| {
+            Ok((
+                category,
+                amount_cents,
+                TransactionType::from_sql_str(&type_str)?,
+                is_one_time,
+            ))
+        })
+        .collect()
 }
 
 /// Sums `spending_effect` over every transaction dated within `[from, to]`
-/// (inclusive), optionally scoped to one category - a query directly
-/// against `transactions` (not `transactions::list`) so it stays entirely
-/// in `rusqlite::Result` and composes with `?` inside a caller's own
-/// `query_map` closure if needed. The one shared place budgets, pay cycles,
-/// and Safe to Spend all read "spending in a date range" from, instead of
-/// each hand-rolling the same query.
+/// (inclusive), optionally scoped to one category. Split-aware (see
+/// `split_expanded_rows`) - the one shared place budgets, pay cycles, and
+/// Safe to Spend all read "spending in a date range" from, instead of each
+/// hand-rolling the same query.
 pub fn spending_in_range(
     conn: &Connection,
     category: Option<&str>,
     from: &str,
     to: &str,
 ) -> rusqlite::Result<i64> {
-    let amounts: Vec<i64> = if let Some(cat) = category {
-        let mut stmt = conn.prepare(
-            "SELECT amount_cents, transaction_type FROM transactions
-             WHERE category = ?1 AND transaction_date >= ?2 AND transaction_date <= ?3 AND is_archived = 0",
-        )?;
-        let rows = stmt
-            .query_map(params![cat, from, to], row_to_spending_effect)?
-            .collect::<rusqlite::Result<Vec<i64>>>()?;
-        rows
-    } else {
-        let mut stmt = conn.prepare(
-            "SELECT amount_cents, transaction_type FROM transactions
-             WHERE transaction_date >= ?1 AND transaction_date <= ?2 AND is_archived = 0",
-        )?;
-        let rows = stmt
-            .query_map(params![from, to], row_to_spending_effect)?
-            .collect::<rusqlite::Result<Vec<i64>>>()?;
-        rows
-    };
-    Ok(amounts.iter().sum())
+    let rows = split_expanded_rows(conn, from, to)?;
+    Ok(rows
+        .into_iter()
+        .filter(|(cat, _, _, _)| category.is_none_or(|c| cat == c))
+        .map(|(_, amount_cents, transaction_type, _)| {
+            spending_effect(transaction_type, amount_cents)
+        })
+        .sum())
+}
+
+/// Like `spending_in_range` scoped to one category, but excluding any
+/// transaction (or split of one) flagged `is_one_time` - a historical
+/// baseline's own "what's typical here" question, never official actual
+/// spending (which always includes every real transaction; see
+/// `budgets::historical_typical`, the only caller).
+pub fn spending_in_range_excluding_one_time(
+    conn: &Connection,
+    category: &str,
+    from: &str,
+    to: &str,
+) -> rusqlite::Result<i64> {
+    let rows = split_expanded_rows(conn, from, to)?;
+    Ok(rows
+        .into_iter()
+        .filter(|(cat, _, _, is_one_time)| cat == category && !is_one_time)
+        .map(|(_, amount_cents, transaction_type, _)| {
+            spending_effect(transaction_type, amount_cents)
+        })
+        .sum())
 }
 
 /// Total income in a date range - the mirror of `spending_in_range` for the
@@ -1184,6 +1232,74 @@ mod tests {
         assert_eq!(
             spending_in_range(&conn, None, "2026-08-01", "2026-08-31").unwrap(),
             5000
+        );
+    }
+
+    // Batch 7 reconnaissance found this gap: `spending_in_range` used to
+    // filter `transactions.category` directly, which is only ever the
+    // *pre-split* label - a split transaction's real per-category spending
+    // (in `transaction_splits`) was silently misattributed to whatever
+    // category the parent happened to carry. Fixed via
+    // `split_expanded_rows`, the same expansion `reports::spending_by_category`
+    // already used.
+    #[test]
+    fn spending_in_range_is_split_aware_for_a_category_scoped_query() {
+        let conn = test_conn();
+        let checking = make_account(&conn, AccountType::Checking);
+        let parent = crate::transactions::create(
+            &conn,
+            &crate::transactions::TransactionInput {
+                account_id: checking,
+                transaction_date: "2026-08-05".to_string(),
+                posted_date: None,
+                amount_cents: -12000,
+                transaction_type: TransactionType::Purchase,
+                raw_description: "Walmart".to_string(),
+                merchant: None,
+                category: Some("Groceries".to_string()), // pre-split label
+                subcategory: None,
+                notes: None,
+                tags: None,
+                is_pending: None,
+                payee_id: None,
+                is_one_time: false,
+            },
+        )
+        .unwrap();
+        let mut conn = conn;
+        crate::splits::replace_for_transaction(
+            &mut conn,
+            parent.id,
+            &[
+                crate::splits::SplitInput {
+                    category: Some("Groceries".to_string()),
+                    subcategory: None,
+                    amount_cents: -8000,
+                    notes: None,
+                },
+                crate::splits::SplitInput {
+                    category: Some("Household".to_string()),
+                    subcategory: None,
+                    amount_cents: -4000,
+                    notes: None,
+                },
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(
+            spending_in_range(&conn, Some("Groceries"), "2026-08-01", "2026-08-31").unwrap(),
+            8000,
+            "only the Groceries split's own $80 counts, never the parent's full $120"
+        );
+        assert_eq!(
+            spending_in_range(&conn, Some("Household"), "2026-08-01", "2026-08-31").unwrap(),
+            4000
+        );
+        assert_eq!(
+            spending_in_range(&conn, None, "2026-08-01", "2026-08-31").unwrap(),
+            12000,
+            "an unscoped total must still equal the parent's own ledger amount"
         );
     }
 

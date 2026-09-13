@@ -8,14 +8,13 @@
 //! category+date filter, not a second, redundant transaction-browsing
 //! backend.
 
-use rusqlite::{params, Connection};
+use rusqlite::Connection;
 use serde::Serialize;
 use tauri::State;
 
 use crate::accounting;
 use crate::dates;
 use crate::db::DbState;
-use crate::transactions::TransactionType;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CategoryTotal {
@@ -26,42 +25,28 @@ pub struct CategoryTotal {
 /// Spending by category for a date range, highest first - the "where did
 /// my money go" drilldown. A category with zero net spending (e.g. fully
 /// offset by a refund) is omitted rather than shown as a useless zero row.
-/// Reuses `TransactionType::from_sql_str`/`accounting::spending_effect`
-/// directly, so a category total is never classified differently than
-/// `spending_in_range` would classify the same transaction.
+/// Reuses `accounting::spending_effect` directly, so a category total is
+/// never classified differently than `spending_in_range` would classify the
+/// same transaction.
 ///
 /// Split-aware (Transaction Intelligence, specs/phase-012): a transaction
 /// with rows in `transaction_splits` contributes its *children's*
 /// category/amount pairs instead of its own single one - the parent's own
 /// `amount_cents` is never also counted, so a split transaction's total
 /// contribution here is still exactly its own ledger amount, just broken
-/// across categories rather than lumped into one. An unsplit transaction's
-/// query branch is byte-identical to before this batch.
+/// across categories rather than lumped into one. Built on
+/// `accounting::split_expanded_rows` (Batch 7) - the same split-expansion
+/// query `spending_in_range` now uses, so a category total here can never
+/// disagree with what a budget's actual spending shows for that category.
 pub fn spending_by_category(
     conn: &Connection,
     from: &str,
     to: &str,
 ) -> rusqlite::Result<Vec<CategoryTotal>> {
-    let mut stmt = conn.prepare(
-        "SELECT COALESCE(s.category, 'Uncategorized'), s.amount_cents, t.transaction_type
-         FROM transactions t
-         JOIN transaction_splits s ON s.transaction_id = t.id
-         WHERE t.transaction_date >= ?1 AND t.transaction_date <= ?2 AND t.is_archived = 0
-         UNION ALL
-         SELECT COALESCE(t.category, 'Uncategorized'), t.amount_cents, t.transaction_type
-         FROM transactions t
-         WHERE t.transaction_date >= ?1 AND t.transaction_date <= ?2 AND t.is_archived = 0
-           AND NOT EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = t.id)",
-    )?;
-    let rows: Vec<(String, i64, String)> = stmt
-        .query_map(params![from, to], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let rows = accounting::split_expanded_rows(conn, from, to)?;
 
     let mut totals: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
-    for (category, amount_cents, type_str) in rows {
-        let transaction_type = TransactionType::from_sql_str(&type_str)?;
+    for (category, amount_cents, transaction_type, _is_one_time) in rows {
         let effect = accounting::spending_effect(transaction_type, amount_cents);
         if effect != 0 {
             *totals.entry(category).or_insert(0) += effect;
@@ -139,7 +124,7 @@ pub fn get_income_vs_spending_trend(state: State<DbState>) -> Result<Vec<Monthly
 mod tests {
     use super::*;
     use crate::accounts::{self, AccountInput, AccountType};
-    use crate::transactions::{self, TransactionInput};
+    use crate::transactions::{self, TransactionInput, TransactionType};
 
     fn test_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();

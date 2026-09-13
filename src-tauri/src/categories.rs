@@ -182,6 +182,8 @@ mod tests {
             "../migrations/0013_recurring_intelligence.sql"
         ))
         .unwrap();
+        conn.execute_batch(include_str!("../migrations/0014_budget_intelligence.sql"))
+            .unwrap();
         conn
     }
 
@@ -328,6 +330,7 @@ mod tests {
                 month: "2026-08-01".to_string(),
                 planned_amount_cents: 20000,
                 classification: Classification::Flexible,
+                rollover_enabled: false,
             },
         )
         .unwrap();
@@ -338,6 +341,7 @@ mod tests {
                 month: "2026-09-01".to_string(),
                 planned_amount_cents: 20000,
                 classification: Classification::Flexible,
+                rollover_enabled: false,
             },
         )
         .unwrap();
@@ -350,6 +354,7 @@ mod tests {
                 month: "2026-09-01".to_string(),
                 planned_amount_cents: 30000,
                 classification: Classification::Flexible,
+                rollover_enabled: false,
             },
         )
         .unwrap();

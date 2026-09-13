@@ -93,6 +93,8 @@ pub fn run() {
             budgets::update_budget,
             budgets::delete_budget,
             budgets::get_budget_suggestions,
+            budgets::copy_budgets_from_month,
+            budgets::get_unbudgeted_spending,
             savings_goals::list_savings_goals,
             savings_goals::create_savings_goal,
             savings_goals::update_savings_goal,

@@ -16,6 +16,7 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0011_reconciliation.sql"),
     include_str!("../migrations/0012_transaction_intelligence.sql"),
     include_str!("../migrations/0013_recurring_intelligence.sql"),
+    include_str!("../migrations/0014_budget_intelligence.sql"),
 ];
 
 /// The schema version this build knows how to read and write - always
@@ -275,7 +276,7 @@ mod tests {
             conn.execute_batch(sql).unwrap();
         }
         conn.pragma_update(None, "user_version", 7).unwrap();
-        assert_eq!(MIGRATIONS.len(), 13, "this test targets exactly the v0.1.0 -> Foundation Batch 1 boundary; update the slice above if more migrations are added before this one");
+        assert_eq!(MIGRATIONS.len(), 14, "this test targets exactly the v0.1.0 -> Foundation Batch 1 boundary; update the slice above if more migrations are added before this one");
 
         conn.execute(
             "INSERT INTO accounts (id, name, institution, account_type, include_in_net_worth, notes)
@@ -481,7 +482,7 @@ mod tests {
             conn.execute_batch(sql).unwrap();
         }
         conn.pragma_update(None, "user_version", 8).unwrap();
-        assert_eq!(MIGRATIONS.len(), 13, "this test targets exactly the Foundation Batch 1 -> Import Engine v2 boundary; update the slice above if more migrations are added before this one");
+        assert_eq!(MIGRATIONS.len(), 14, "this test targets exactly the Foundation Batch 1 -> Import Engine v2 boundary; update the slice above if more migrations are added before this one");
 
         conn.execute(
             "INSERT INTO accounts (id, name, account_type, include_in_net_worth) VALUES (1, 'Checking', 'checking', 1)",
@@ -557,7 +558,7 @@ mod tests {
             conn.execute_batch(sql).unwrap();
         }
         conn.pragma_update(None, "user_version", 9).unwrap();
-        assert_eq!(MIGRATIONS.len(), 13, "this test targets exactly the Import Engine v2 -> OFX source adapter boundary; update the slice above if more migrations are added before this one");
+        assert_eq!(MIGRATIONS.len(), 14, "this test targets exactly the Import Engine v2 -> OFX source adapter boundary; update the slice above if more migrations are added before this one");
 
         conn.execute(
             "INSERT INTO accounts (id, name, account_type, include_in_net_worth) VALUES (1, 'Checking', 'checking', 1)",
@@ -713,7 +714,7 @@ mod tests {
             conn.execute_batch(sql).unwrap();
         }
         conn.pragma_update(None, "user_version", 11).unwrap();
-        assert_eq!(MIGRATIONS.len(), 13, "this test targets exactly the Reconciliation -> Transaction Intelligence boundary; update the slice above if more migrations are added before this one");
+        assert_eq!(MIGRATIONS.len(), 14, "this test targets exactly the Reconciliation -> Transaction Intelligence boundary; update the slice above if more migrations are added before this one");
 
         conn.execute(
             "INSERT INTO accounts (id, name, account_type, include_in_net_worth) VALUES (1, 'Checking', 'checking', 1)",
@@ -770,7 +771,7 @@ mod tests {
             conn.execute_batch(sql).unwrap();
         }
         conn.pragma_update(None, "user_version", 12).unwrap();
-        assert_eq!(MIGRATIONS.len(), 13, "this test targets exactly the Transaction Intelligence -> Recurring Intelligence boundary; update the slice above if more migrations are added before this one");
+        assert_eq!(MIGRATIONS.len(), 14, "this test targets exactly the Transaction Intelligence -> Recurring Intelligence boundary; update the slice above if more migrations are added before this one");
 
         conn.execute(
             "INSERT INTO accounts (id, name, account_type, include_in_net_worth) VALUES (1, 'Checking', 'checking', 1)",
@@ -856,5 +857,71 @@ mod tests {
             occurrence_count, 0,
             "recurring_occurrences must exist and start empty"
         );
+    }
+
+    /// Budget Intelligence (specs/phase-015) rebuilds `budgets` to widen its
+    /// `classification` CHECK (adds 'discretionary') and add a
+    /// `rollover_enabled` flag - same proof shape as the migrations above,
+    /// scoped to the 0013 -> 0014 boundary. A pre-existing budget row must
+    /// survive with its own classification untouched and rollover
+    /// defaulted off.
+    #[test]
+    fn migration_0014_preserves_existing_budgets_and_defaults_rollover_off() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        for sql in &MIGRATIONS[0..13] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 13).unwrap();
+        assert_eq!(MIGRATIONS.len(), 14, "this test targets exactly the Recurring Intelligence -> Budget Intelligence boundary; update the slice above if more migrations are added before this one");
+
+        conn.execute(
+            "INSERT INTO budgets (id, category, month, planned_amount_cents, classification)
+             VALUES (1, 'Groceries', '2026-08-01', 45000, 'fixed')",
+            [],
+        )
+        .unwrap();
+
+        conn.execute_batch(MIGRATIONS[13]).unwrap();
+        conn.pragma_update(None, "user_version", 14).unwrap();
+
+        let version: i32 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 14);
+
+        let (category, month, planned, classification, rollover_enabled): (
+            String,
+            String,
+            i64,
+            String,
+            i64,
+        ) = conn
+            .query_row(
+                "SELECT category, month, planned_amount_cents, classification, rollover_enabled
+                 FROM budgets WHERE id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .unwrap();
+        assert_eq!(category, "Groceries");
+        assert_eq!(month, "2026-08-01");
+        assert_eq!(planned, 45000);
+        assert_eq!(
+            classification, "fixed",
+            "an existing classification must survive untouched"
+        );
+        assert_eq!(
+            rollover_enabled, 0,
+            "new rollover flag defaults off for old rows"
+        );
+
+        // The widened CHECK constraint must actually accept the new value.
+        conn.execute(
+            "INSERT INTO budgets (category, month, planned_amount_cents, classification, rollover_enabled)
+             VALUES ('Dining', '2026-08-01', 30000, 'discretionary', 1)",
+            [],
+        )
+        .unwrap();
     }
 }

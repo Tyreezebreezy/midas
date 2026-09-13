@@ -317,7 +317,9 @@ mod tests {
             "../migrations/0013_recurring_intelligence.sql"
         ))
         .unwrap();
-        conn.pragma_update(None, "user_version", 13).unwrap();
+        conn.execute_batch(include_str!("../migrations/0014_budget_intelligence.sql"))
+            .unwrap();
+        conn.pragma_update(None, "user_version", 14).unwrap();
         conn
     }
 
@@ -362,14 +364,14 @@ mod tests {
         .unwrap();
 
         let backup = create_backup(&conn).unwrap();
-        assert_eq!(backup.schema_version, 13);
+        assert_eq!(backup.schema_version, 14);
         assert_eq!(backup.account_count, 1);
         assert_eq!(backup.transaction_count, 1);
         assert!(backup.filename.starts_with("midas-backup-"));
         assert!(backup.filename.ends_with(".sqlite3"));
 
         let validation = preview_restore(&backup.content_base64).unwrap();
-        assert_eq!(validation.schema_version, 13);
+        assert_eq!(validation.schema_version, 14);
         assert_eq!(validation.account_count, 1);
         assert_eq!(validation.transaction_count, 1);
         assert!(!validation.needs_migration);
@@ -438,7 +440,7 @@ mod tests {
 
         for _ in 0..3 {
             let validation = preview_restore(&backup.content_base64).unwrap();
-            assert_eq!(validation.schema_version, 13);
+            assert_eq!(validation.schema_version, 14);
             assert_eq!(validation.account_count, 0);
         }
     }
