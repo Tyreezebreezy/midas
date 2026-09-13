@@ -561,6 +561,70 @@ footer {
   background: var(--midas-positive);
 }
 
+/* Review Center / Signals / Data Health (Batch 9) - the badge text itself
+   always names the state ("High priority", "Important", "Needs Attention"),
+   so color is reinforcement, never the only signal (sections 83, 95). */
+
+.badge-priority-high,
+.badge-severity-important {
+  color: var(--midas-bg);
+  background: var(--midas-negative);
+}
+
+.badge-priority-normal,
+.badge-severity-attention {
+  color: var(--midas-bg-deep);
+  background: var(--midas-gold);
+}
+
+.badge-priority-low,
+.badge-severity-info {
+  color: var(--midas-text);
+  background: var(--midas-border);
+}
+
+.badge-health-good {
+  color: var(--midas-bg);
+  background: var(--midas-positive);
+}
+
+.badge-health-needs_attention {
+  color: var(--midas-bg-deep);
+  background: var(--midas-gold);
+}
+
+.review-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 1.25rem;
+}
+
+.review-empty-state {
+  padding: 2rem 0;
+  text-align: center;
+}
+
+.review-empty-state h2 {
+  margin-bottom: 0.4rem;
+}
+
+.data-health-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 1.25rem;
+}
+
+.data-health-row {
+  padding: 1rem 1.1rem;
+  background: var(--midas-surface);
+  border-radius: 0.6rem;
+}
+
+.data-health-row .review-item-header {
+  margin-bottom: 0.4rem;
+}
+
 /* Amount direction radio group (transaction form) */
 
 .amount-direction {
@@ -779,7 +843,8 @@ footer {
   white-space: nowrap;
 }
 
-/* Needs Review */
+/* Review (persisted needs_review_items - shared by the old flat list and
+   the new unified Review Center) */
 
 .review-list {
   display: grid;

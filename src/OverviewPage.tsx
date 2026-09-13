@@ -214,18 +214,58 @@ function OverviewPage({
 
       <div className="overview-grid">
         <div className="overview-card">
-          <h2>Needs review</h2>
-          <p className="headline-number">{overview.needs_review_count}</p>
-          {overview.needs_review_items.length === 0 ? (
-            <p className="overview-card-empty">Nothing needs review.</p>
+          <h2>Needs attention</h2>
+          {overview.needs_review_count === 0 && !overview.top_signal ? (
+            <p className="overview-card-empty">You're caught up.</p>
           ) : (
-            <ul className="overview-mini-list">
-              {overview.needs_review_items.slice(0, 3).map((item) => (
-                <li key={item.id}>
-                  <span>{item.detected_reason}</span>
-                </li>
-              ))}
-            </ul>
+            <>
+              <p className="headline-number">
+                {overview.needs_review_count + (overview.top_signal ? 1 : 0)}
+              </p>
+              <ul className="overview-mini-list">
+                {(() => {
+                  const uncategorized = overview.needs_review_items.filter(
+                    (i) => i.kind === "uncategorized",
+                  ).length;
+                  const others = overview.needs_review_items.filter(
+                    (i) => i.kind !== "uncategorized",
+                  );
+                  return (
+                    <>
+                      {uncategorized > 0 && (
+                        <li>
+                          <span>
+                            {uncategorized} uncategorized{" "}
+                            {uncategorized === 1
+                              ? "transaction"
+                              : "transactions"}
+                          </span>
+                        </li>
+                      )}
+                      {others.slice(0, 3).map((item) => (
+                        <li key={item.key}>
+                          <span>{item.title}</span>
+                        </li>
+                      ))}
+                      {overview.top_signal && (
+                        <li>
+                          <span>{overview.top_signal.title}</span>
+                        </li>
+                      )}
+                    </>
+                  );
+                })()}
+              </ul>
+              <p className="hero-summary-line">
+                <button
+                  type="button"
+                  className="btn-link"
+                  onClick={() => onNavigate("review")}
+                >
+                  Review all →
+                </button>
+              </p>
+            </>
           )}
         </div>
 

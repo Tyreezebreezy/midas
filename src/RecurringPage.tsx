@@ -162,7 +162,7 @@ function OccurrenceRow({
           )}
           {occurrence.status === "needs_review" && (
             <button type="button" className="btn-link" onClick={onReview}>
-              Review in Needs Review →
+              Resolve in Review →
             </button>
           )}
         </div>

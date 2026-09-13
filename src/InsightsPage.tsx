@@ -397,7 +397,7 @@ function SpendingTab({
       {uncategorized && uncategorized.spent_cents > 0 && (
         <p className="muted">
           Uncategorized spending: {formatCents(uncategorized.spent_cents)} -
-          review it on the Needs Review page.
+          review it on the Review page.
         </p>
       )}
 

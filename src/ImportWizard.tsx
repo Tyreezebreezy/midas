@@ -703,7 +703,7 @@ function ImportWizard({
             </li>
             <li>
               <strong>{staging.needs_review_count}</strong> could not be used
-              (sent to Needs Review)
+              (sent to Review)
             </li>
           </ul>
           <p className="muted">
@@ -820,7 +820,7 @@ function ImportWizard({
             <li>{combinedSummary.duplicate_count} duplicates skipped</li>
             <li>
               {combinedSummary.sent_to_review_count} possible matches sent to
-              Needs Review
+              Review
             </li>
             <li>{combinedSummary.invalid_count} rows could not be used</li>
             {combinedSummary.excluded_count > 0 && (

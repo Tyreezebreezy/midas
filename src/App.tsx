@@ -4,9 +4,9 @@ import AccountsPage from "./AccountsPage";
 import BudgetsPage from "./BudgetsPage";
 import ForecastPage from "./ForecastPage";
 import InsightsPage from "./InsightsPage";
-import NeedsReviewPage from "./NeedsReviewPage";
 import OverviewPage from "./OverviewPage";
 import RecurringPage from "./RecurringPage";
+import ReviewPage from "./ReviewPage";
 import SavingsGoalsPage from "./SavingsGoalsPage";
 import SettingsPage from "./SettingsPage";
 import TransactionsPage from "./TransactionsPage";
@@ -55,7 +55,7 @@ const navGroups: {
       { id: "forecast", label: "Forecast" },
     ],
   },
-  { label: "Review", items: [{ id: "review", label: "Needs Review" }] },
+  { label: "Review", items: [{ id: "review", label: "Review" }] },
 ];
 
 function loadTheme(): ThemePreference {
@@ -165,7 +165,7 @@ function App() {
           {tab === "goals" && <SavingsGoalsPage />}
           {tab === "insights" && <InsightsPage />}
           {tab === "forecast" && <ForecastPage />}
-          {tab === "review" && <NeedsReviewPage />}
+          {tab === "review" && <ReviewPage onNavigate={setTab} />}
           {tab === "settings" && (
             <SettingsPage
               theme={theme}

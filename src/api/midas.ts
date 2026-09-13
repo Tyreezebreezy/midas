@@ -770,7 +770,8 @@ export interface OverviewResult {
   upcoming_bills: RecurringSeries[];
   pay_cycle: CycleSummary | null;
   needs_review_count: number;
-  needs_review_items: NeedsReviewItem[];
+  needs_review_items: ReviewItem[];
+  top_signal: Signal | null;
   savings_goals: SavingsGoal[];
   net_worth: NetWorthBreakdown;
   budget_health: Budget[];
@@ -1158,4 +1159,98 @@ export interface ForecastResult {
 export const forecastApi = {
   getForecast: (accountIds: number[], horizonDays: number) =>
     invoke<ForecastResult>("get_forecast", { accountIds, horizonDays }),
+};
+
+// --- Review Center (Batch 9, specs/phase-016) ---
+export type ReviewPriority = "high" | "normal" | "low";
+export type ReviewDomain =
+  "transactions" | "imports" | "recurring" | "reconciliation";
+
+export interface ReviewItem {
+  key: string;
+  domain: ReviewDomain;
+  priority: ReviewPriority;
+  kind: string;
+  title: string;
+  evidence: string;
+  sort_date: string;
+  needs_review_item_id: number | null;
+  transaction_id: number | null;
+  account_id: number | null;
+  series_id: number | null;
+  occurrence_ids: number[];
+  reconciliation_id: number | null;
+  duplicate_of_transaction_id: number | null;
+}
+
+export const reviewApi = {
+  list: () => invoke<ReviewItem[]>("list_review"),
+  keepDuplicate: (needsReviewItemId: number) =>
+    invoke<Transaction>("keep_duplicate_review_transaction", {
+      needsReviewItemId,
+    }),
+};
+
+// --- Data Health (Batch 9, specs/phase-016) ---
+export type HealthState = "good" | "needs_attention";
+
+export interface TransactionHealth {
+  uncategorized_count: number;
+  possible_duplicate_count: number;
+  state: HealthState;
+}
+
+export interface ImportHealth {
+  last_import_date: string | null;
+  unresolved_count: number;
+  state: HealthState;
+}
+
+export interface AccountReconciliationHealth {
+  account_id: number;
+  name: string;
+  last_reconciled_date: string | null;
+  needs_review: boolean;
+}
+
+export interface ReconciliationHealth {
+  accounts: AccountReconciliationHealth[];
+  invalid_count: number;
+  never_reconciled_count: number;
+  state: HealthState;
+}
+
+export interface RecurringHealth {
+  pending_review_count: number;
+  state: HealthState;
+}
+
+export interface DataHealth {
+  transactions: TransactionHealth;
+  imports: ImportHealth;
+  reconciliation: ReconciliationHealth;
+  recurring: RecurringHealth;
+}
+
+export const dataHealthApi = {
+  get: () => invoke<DataHealth>("get_data_health"),
+};
+
+// --- Financial Signals (Batch 9, specs/phase-016) ---
+export type SignalSeverity = "info" | "attention" | "important";
+export type SignalNavigation =
+  "insights" | "budgets" | "forecast" | "recurring";
+
+export interface Signal {
+  key: string;
+  kind: string;
+  severity: SignalSeverity;
+  title: string;
+  evidence: string;
+  navigation: SignalNavigation;
+  navigation_context: string | null;
+}
+
+export const signalsApi = {
+  list: () => invoke<Signal[]>("get_signals"),
 };
