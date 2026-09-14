@@ -22,3 +22,16 @@ export function formatDate(isoDate: string): string {
     date.getUTCFullYear() === currentYear ? dayFormatter : dayFormatterWithYear;
   return formatter.format(date);
 }
+
+const monthFormatter = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  year: "numeric",
+  timeZone: "UTC",
+});
+
+// "Aug 2026" - for a month-bucketed trend (e.g. net worth history), where
+// the underlying date is always a specific day (month-end, or today for the
+// current month) but only the month itself is meaningful to show.
+export function formatMonthYear(isoDate: string): string {
+  return monthFormatter.format(new Date(isoDate));
+}

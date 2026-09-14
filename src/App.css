@@ -60,6 +60,12 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  /* A long unbroken value (a merchant name, a filename) inside a nested
+     `.table-scroll`/`.main-column` scroll container can still inflate the
+     document's own scrollable overflow in Chromium/WebView2, even though
+     every ancestor box is correctly sized - this is the backstop so the
+     page itself never grows a second, redundant horizontal scrollbar. */
+  overflow-x: hidden;
   background: var(--midas-bg-deep);
 }
 

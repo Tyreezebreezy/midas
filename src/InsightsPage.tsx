@@ -17,6 +17,7 @@ import {
   type SpendingInsights,
 } from "./api/midas";
 import { formatCents, useMasked } from "./lib/currency";
+import { formatMonthYear } from "./lib/dateFormat";
 import {
   currentPeriodValue,
   periodComparison,
@@ -847,7 +848,7 @@ function NetWorthTab({
           <tbody>
             {history.map((point) => (
               <tr key={point.as_of_date}>
-                <td>{point.as_of_date}</td>
+                <td>{formatMonthYear(point.as_of_date)}</td>
                 <td className="col-balance">
                   {formatCents(point.net_worth_cents)}
                 </td>
