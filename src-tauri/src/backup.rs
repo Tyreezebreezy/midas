@@ -627,4 +627,128 @@ mod tests {
         drop(live_conn);
         std::fs::remove_dir_all(&dir).ok();
     }
+
+    /// Release-hardening regression: the full disposable-environment
+    /// procedure end to end (create data, back up, change further, restore,
+    /// then simulate an actual app restart by dropping every in-process
+    /// handle and reopening `live_path` from disk exactly the way
+    /// `db::open` is called on real startup) - proving the restored state
+    /// on disk is correct independent of any in-memory connection, with no
+    /// hybrid of pre- and post-backup data, and that the file passes both
+    /// integrity checks a real launch would never separately verify.
+    #[test]
+    fn restore_survives_a_full_restart_with_no_hybrid_state_and_passes_integrity_checks() {
+        let dir = test_dir("restart");
+        let live_path = dir.join(DB_FILENAME);
+
+        let live_seed = test_conn();
+        let checking = make_account(&live_seed);
+        transactions::create(
+            &live_seed,
+            &TransactionInput {
+                account_id: checking,
+                transaction_date: "2026-08-01".to_string(),
+                posted_date: None,
+                amount_cents: 250_000,
+                transaction_type: TransactionType::OpeningBalance,
+                raw_description: "Opening balance".to_string(),
+                merchant: None,
+                category: None,
+                subcategory: None,
+                notes: None,
+                tags: None,
+                is_pending: None,
+                payee_id: None,
+                is_one_time: false,
+            },
+        )
+        .unwrap();
+        let scratch = dir.join("live-seed.sqlite3");
+        live_seed
+            .execute("VACUUM INTO ?1", [scratch.to_string_lossy().as_ref()])
+            .unwrap();
+        std::fs::copy(&scratch, &live_path).unwrap();
+        let live_conn = Mutex::new(db::open(&live_path).unwrap());
+
+        // The backup point: exactly one account, opening balance only.
+        let backup = {
+            let conn = live_conn.lock().unwrap();
+            create_backup(&conn).unwrap()
+        };
+        assert_eq!(backup.account_count, 1);
+        assert_eq!(backup.transaction_count, 1);
+
+        // A change made *after* the backup, which must NOT survive restore.
+        {
+            let conn = live_conn.lock().unwrap();
+            transactions::create(
+                &conn,
+                &TransactionInput {
+                    account_id: checking,
+                    transaction_date: "2026-08-15".to_string(),
+                    posted_date: None,
+                    amount_cents: -4200,
+                    transaction_type: TransactionType::Purchase,
+                    raw_description: "Post-backup purchase".to_string(),
+                    merchant: None,
+                    category: None,
+                    subcategory: None,
+                    notes: None,
+                    tags: None,
+                    is_pending: None,
+                    payee_id: None,
+                    is_one_time: false,
+                },
+            )
+            .unwrap();
+            let count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM transactions", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(
+                count, 2,
+                "the post-backup purchase must be live before restore"
+            );
+        }
+
+        restore_backup(&live_path, &live_conn, &backup.content_base64).unwrap();
+
+        // Simulate a real app restart: drop every in-process handle this
+        // test holds (including the one restore_backup itself just opened)
+        // and reopen the file fresh from disk, the same call a real launch
+        // makes - proving the correctness lives in the file, not in state
+        // that happens to still be resident in this process.
+        drop(live_conn);
+        let restarted = db::open(&live_path).unwrap();
+
+        let count: i64 = restarted
+            .query_row("SELECT COUNT(*) FROM transactions", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            count, 1,
+            "only the backup-point transaction may remain - no hybrid of old and new state"
+        );
+        let amount: i64 = restarted
+            .query_row("SELECT amount_cents FROM transactions LIMIT 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(
+            amount, 250_000,
+            "the exact backup-point value must come back unchanged"
+        );
+
+        let integrity: String = restarted
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(integrity, "ok");
+        let fk_violations: i64 = restarted
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(fk_violations, 0);
+
+        drop(restarted);
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

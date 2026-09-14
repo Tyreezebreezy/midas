@@ -42,7 +42,9 @@ pub fn run() {
         .setup(|app| {
             let app_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&app_dir)?;
-            let conn = db::open(&app_dir.join("midas.sqlite3"))?;
+            let conn = db::open(&app_dir.join("midas.sqlite3")).inspect_err(|e| {
+                db::write_launch_error_log(&app_dir, e);
+            })?;
             app.manage(DbState(Mutex::new(conn)));
             Ok(())
         })

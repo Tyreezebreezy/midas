@@ -67,6 +67,26 @@ impl From<rusqlite::Error> for MigrationError {
 /// single-user desktop app with no meaningful write concurrency to pool for.
 pub struct DbState(pub Mutex<Connection>);
 
+/// Release-hardening safety net: a release build has no console window
+/// (`windows_subsystem = "windows"`), so if `open` fails during startup the
+/// app would otherwise just vanish with zero explanation - it never writes
+/// to the database on this path (nothing "blind" happens to the user's
+/// data), but the user is left with no way to know why MIDAS didn't launch.
+/// Best-effort only: a failure here must never mask or replace the original
+/// error, so the caller's `?` still propagates it exactly as before.
+pub fn write_launch_error_log(app_dir: &Path, err: &MigrationError) {
+    let path = app_dir.join("launch-error.log");
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let contents = format!(
+        "[unix:{secs}] MIDAS could not open its database and did not start.\n\
+         Your data file has not been modified. Details: {err}\n"
+    );
+    let _ = std::fs::write(path, contents);
+}
+
 /// Opens (creating if needed) the SQLite database at `path` and applies any
 /// pending migrations. Safe to call every app startup: migrations only run
 /// once each, tracked via SQLite's built-in `PRAGMA user_version`.
@@ -114,6 +134,44 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         migrate(&conn).unwrap();
         conn
+    }
+
+    #[test]
+    fn write_launch_error_log_leaves_a_readable_diagnostic_and_never_panics() {
+        let dir =
+            std::env::temp_dir().join(format!("midas-launch-error-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let err = MigrationError::NewerSchema {
+            found: 99,
+            supported: 14,
+        };
+        write_launch_error_log(&dir, &err);
+
+        let contents = std::fs::read_to_string(dir.join("launch-error.log")).unwrap();
+        assert!(contents.contains("could not open its database"));
+        assert!(contents.contains("has not been modified"));
+        assert!(contents.contains("schema 99"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn write_launch_error_log_is_best_effort_when_the_directory_does_not_exist() {
+        // Must never panic even if the app-data directory itself is somehow
+        // gone by the time the error path runs - this is a diagnostic
+        // nicety, not something allowed to introduce a second failure mode.
+        let missing =
+            std::env::temp_dir().join(format!("midas-launch-error-missing-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&missing);
+        write_launch_error_log(
+            &missing,
+            &MigrationError::NewerSchema {
+                found: 1,
+                supported: 1,
+            },
+        );
     }
 
     #[test]
