@@ -1,6 +1,6 @@
 [package]
 name = "midas"
-version = "0.1.0"
+version = "1.0.0-rc.1"
 description = "MIDAS: a private, local-first personal finance desktop application"
 authors = ["Tyree"]
 edition = "2021"
