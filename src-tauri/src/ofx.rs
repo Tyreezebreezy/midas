@@ -224,10 +224,9 @@ fn extract(xml: &str) -> Result<ParsedOfx, OfxError> {
     let mut current_txn: Option<OfxTransaction> = None;
 
     loop {
-        match reader
-            .read_event()
-            .map_err(|e| OfxError::Malformed(e.to_string()))?
-        {
+        match reader.read_event().map_err(|_| {
+            OfxError::Malformed("the file's OFX/QFX structure could not be parsed".to_string())
+        })? {
             Event::Eof => break,
             // A self-closing tag (`Event::Empty`, `<TAG/>`) never gets a
             // matching `Event::End` from quick-xml, so it must never be
@@ -311,9 +310,15 @@ fn extract(xml: &str) -> Result<ParsedOfx, OfxError> {
                 stack.pop();
             }
             Event::Text(t) => {
-                let decoded = t.decode().map_err(|e| OfxError::Malformed(e.to_string()))?;
+                let decoded = t.decode().map_err(|_| {
+                    OfxError::Malformed("the file's OFX/QFX text encoding is invalid".to_string())
+                })?;
                 let text = quick_xml::escape::unescape(&decoded)
-                    .map_err(|e| OfxError::Malformed(e.to_string()))?
+                    .map_err(|_| {
+                        OfxError::Malformed(
+                            "the file's OFX/QFX structure could not be parsed".to_string(),
+                        )
+                    })?
                     .trim()
                     .to_string();
                 if text.is_empty() {

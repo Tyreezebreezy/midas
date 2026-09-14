@@ -739,8 +739,17 @@ function ImportWizard({
                     </td>
                     <td>
                       {row.candidate?.raw_description ??
-                        Object.values(row.raw)[0] ??
-                        "—"}
+                        // A row with no usable candidate (missing/invalid
+                        // required field) has no single "description" to
+                        // fall back to - row.raw's key order isn't
+                        // guaranteed, so showing just Object.values(...)[0]
+                        // could display an arbitrary unrelated column
+                        // (found live: an "Extra Column" value instead of
+                        // the actual description). Joining every raw value
+                        // shows the whole row instead of hiding data behind
+                        // a misleading single field.
+                        (Object.values(row.raw).filter(Boolean).join(" · ") ||
+                          "—")}
                     </td>
                     <td className="col-balance">
                       {row.candidate

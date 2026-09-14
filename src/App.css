@@ -964,11 +964,6 @@ footer {
   background: var(--midas-surface);
 }
 
-.review-item-resolved,
-.review-item-dismissed {
-  opacity: 0.65;
-}
-
 .review-item-header {
   display: flex;
   align-items: center;
@@ -978,10 +973,6 @@ footer {
 
 .review-item p {
   margin: 0.3rem 0;
-}
-
-.review-source {
-  font-size: 0.85rem;
 }
 
 .review-item-actions {
