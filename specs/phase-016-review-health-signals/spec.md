@@ -36,7 +36,7 @@ financial-health score, no second inbox, no notification infrastructure.
   missed occurrence is `recurring_occurrences.status = 'missed'` (Batch 6);
   an invalidated reconciliation is `reconciliations.status = 'needs_review'`
   (Batch 4); an uncategorized purchase is just `transactions.category IS
-  NULL` on a `Purchase`-type row. Only facts with no other durable home
+NULL` on a `Purchase`-type row. Only facts with no other durable home
   (a possible duplicate, a malformed import row, an ambiguous recurring
   match, a payee-merge conflict) go through `needs_review_items` at all.
   This directly enables the handoff's own "likely cleanest architecture"
@@ -68,7 +68,7 @@ Attention" tab, rather than a separate inbox per domain - net zero sidebar
 growth versus the prior single "Needs Review" entry.
 
 - `ReviewItem { key, domain, priority, kind, title, evidence, sort_date,
-  ... }` is the one shape both persisted and derived sources map into.
+... }` is the one shape both persisted and derived sources map into.
   `ReviewPriority` (Low/Normal/High) and `ReviewDomain`
   (Transactions/Imports/Recurring/Reconciliation) are small closed enums,
   never a 0-100 score.
@@ -97,7 +97,7 @@ growth versus the prior single "Needs Review" entry.
   already serialized into `proposed_resolution_json`, but the id of the
   transaction it was flagged as a possible duplicate of was not. Fixed by
   introducing `import::StagedRowProposal { candidate, duplicate_of_transaction_id
-  }`, serialized in place of the bare candidate; `review::keep_duplicate_transaction`
+}`, serialized in place of the bare candidate; `review::keep_duplicate_transaction`
   deserializes it and calls `transactions::create` directly - the exact
   same insert path every other transaction creation already uses, never a
   second commit mechanism.
@@ -113,7 +113,7 @@ reconciliation), which is what "automatic stale-item cleanup" reduces to
 when there's no second copy of the truth to go stale in the first place.
 
 **Bug found in reconnaissance, fixed generally**: `ambiguous_recurring_match`
-is the one persisted kind whose truth is *also* mirrored in derived state
+is the one persisted kind whose truth is _also_ mirrored in derived state
 (the occurrence's own `status`). `reconcile_stale_persisted_items` checks,
 before trusting a persisted "open" row, whether any of its own candidate
 `occurrence_ids` are still actually `status = 'needs_review'` in
@@ -123,10 +123,10 @@ underlying ambiguity, not just the one dedicated UI button that used to be
 the only thing calling `resolve()`.
 
 **Bug found in native verification, fixed at the root**: `recurring_missed`
-originally reused `RecurringSeries::is_possibly_missed`, a *computed*
+originally reused `RecurringSeries::is_possibly_missed`, a _computed_
 field off `next_expected_date` - a live cursor that
 `recurring_occurrences::ensure_occurrences` eagerly advances the instant
-*anything* reads occurrences for that account, including totally unrelated
+_anything_ reads occurrences for that account, including totally unrelated
 reads like opening Forecast or Signals. A genuinely missed item could
 silently vanish from Review merely because the user glanced at Forecast.
 Fixed by querying `recurring_occurrences.status = 'missed'` directly - a
@@ -164,7 +164,7 @@ account is not unhealthy, just unreconciled). One test-writing correction
 worth recording: `account_summary`'s own pre-existing definition of "last
 reconciled" only counts a currently-`completed` record, so invalidating a
 reconciliation correctly increments `never_reconciled_count` too (there is
-no longer a *current* completed reconciliation) - the test was fixed to
+no longer a _current_ completed reconciliation) - the test was fixed to
 assert `needs_review: true` instead of a wrong assumption that the
 never-reconciled count should stay at zero.
 
@@ -188,7 +188,7 @@ Six signals, deliberately not "every imaginable signal":
   weeks of every month. Gated by `MIN_ELAPSED_DAYS_FOR_CATEGORY_SIGNAL = 3`
   (avoid single-transaction day-1 noise) and a combined threshold
   (`SIGNAL_MIN_PERCENT = 25`, `SIGNAL_MIN_CENTS = 5000`) so a $2-to-$4
-  coffee habit's "+100%" never signals - both a meaningful percentage *and*
+  coffee habit's "+100%" never signals - both a meaningful percentage _and_
   a meaningful dollar amount are required.
 - **`budget_over` / `budget_pace_faster`** - `Budget::status`/`Budget::pace`
   (Batch 7) directly. Only Faster/Over ever signal; every on-track or
@@ -256,9 +256,9 @@ targets.
 ## Archived-account semantics (sections 56-58, restated from Batch 8)
 
 Two distinct rules, kept distinct: Batch 8 established that an archived
-account's *historical* transactions must never disappear from Insights -
+account's _historical_ transactions must never disappear from Insights -
 that rule is untouched. This batch adds a second, different rule for the
-*active* Review queue: a derived review item asks the user to act *now*,
+_active_ Review queue: a derived review item asks the user to act _now_,
 which is meaningless for an account nobody manages anymore. All four
 derived-item queries and Data Health's reconciliation summary filter to
 non-archived accounts; none of them touch historical reporting.
@@ -340,7 +340,7 @@ feature, not a regression), Keep Both (verified the held CSV row commits
 as a real new transaction alongside the original, both independently
 confirmed via a read-only inspection of the on-disk database), Dismiss,
 the ambiguous-match candidate picker (verified the chosen occurrence
-becomes `matched` and the *other* candidate correctly reverts to
+becomes `matched` and the _other_ candidate correctly reverts to
 `upcoming`, not left dangling), Mark Skipped, and all five Signal/Review
 navigation targets (Accounts, Forecast, Insights, Budgets). "Mark Pattern
 Inactive" and the `payee_merge_recurring_conflict` action pair were not

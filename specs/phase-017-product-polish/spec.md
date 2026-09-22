@@ -51,7 +51,7 @@ patterns. Findings that drove the rest of this batch:
   rendered a bare `42.50` with no `$` sign - the one place in the app that
   bypassed the shared `formatCents` helper.
 - **A real semantic-color bug**: Overview's Safe to Spend hero rendered a
-  *negative* balance in the same reassuring gold as a healthy positive one.
+  _negative_ balance in the same reassuring gold as a healthy positive one.
 - **One shared money-formatting helper (`formatCents`) is already used
   almost everywhere** - the load-bearing fact that made a centralized
   Privacy Mode architecturally cheap (see below).
@@ -176,6 +176,7 @@ behavior: Personalization (moved first, matching "General" positioning) ->
 Appearance -> Financial Preferences -> **Rules & Data** (new grouping
 label; Payees, Tags, Clean up categories, Rules, Import Profiles, Backup &
 Restore) -> About. "Rules & Data" is the one genuinely new visual grouping
+
 - the other four sections already read clearly on their own.
 
 **New: Import Profiles management** (`ImportProfilesSection.tsx`),
@@ -202,7 +203,7 @@ anything active right now" - is already an unambiguous, self-clearing
 signal. `App.tsx` checks `accountsApi.list(true).length === 0` once on
 mount; the moment onboarding's own account step succeeds, the same check
 naturally recomputes to `false` on the next reason to ask. This correctly
-does *not* trigger on "all accounts archived" or "no transactions this
+does _not_ trigger on "all accounts archived" or "no transactions this
 month," both explicitly named in the handoff as states that must not be
 mistaken for a fresh install.
 
@@ -265,7 +266,7 @@ could be.
   `title` tooltip with the full "Hide/Show financial amounts" phrase, and
   a `.sr-only` span carrying that same full phrase as the accessible name
   - the visible label is shortened to "Hide/Show amounts" only to avoid an
-  ugly two-line wrap in the fixed-width sidebar).
+    ugly two-line wrap in the fixed-width sidebar).
 - **Session-only, never persisted** (the handoff's own recommendation) -
   confirmed live: reloading resets it to off every time.
 - **Charts**: donut slice proportions still reflect real relative
@@ -363,8 +364,8 @@ including the real `AccountForm`/`TransactionForm` dialogs, found and
 fixed the `onSaved` account-identity bug this exposed, verified the "Skip
 setup" path and full keyboard-only completion, then reverted the override
 (confirmed via `grep` and a clean rebuild) before any further work. This
-means the "zero accounts" *detection* condition itself was verified by
-code inspection rather than a live empty-database run; the *flow* once
+means the "zero accounts" _detection_ condition itself was verified by
+code inspection rather than a live empty-database run; the _flow_ once
 triggered was verified completely live.
 
 Privacy Mode verified live end to end: toggling while already on a page

@@ -294,7 +294,7 @@ over 100 characters, 6 tags on one transaction, a -$12,345.67 purchase).
 
 **A real bug found and fixed**: the long merchant name pushed the
 `.table-scroll`-wrapped Transactions table wide enough to inflate the
-*document's own* horizontal scrollable overflow (confirmed via
+_document's own_ horizontal scrollable overflow (confirmed via
 `document.documentElement.scrollWidth` exceeding `clientWidth` by over
 1000px, and visually - the merchant text spilled straight to the browser
 window's edge instead of clipping at the table's own bordered box), even

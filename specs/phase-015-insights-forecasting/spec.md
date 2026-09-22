@@ -108,14 +108,14 @@ by construction and can never disagree about what "this month" means.
 - `periodComparison(mode, value)` implements the one comparison rule
   (section 32): a **completed** period compares its full range against the
   full previous period; the **current, still-in-progress** period compares
-  itself against the *same elapsed number of days* in the previous period
+  itself against the _same elapsed number of days_ in the previous period
   (`Sep 1-13` vs `Aug 1-13`, never `Sep 1-13` vs all of August) - `isPartial`
   tells the UI which language to use ("vs same point last month" vs "vs
   August 2026").
 - Tested in `tests/period.test.mjs`: fixed historical values for
   `periodRange`/`shiftPeriod` (including leap February), a completed-period
   comparison, and a live "current period" comparison that asserts the
-  *day-count-elapsed invariant* rather than a hardcoded date, so it can
+  _day-count-elapsed invariant_ rather than a hardcoded date, so it can
   never become wall-clock-fragile (the Batch 6 lesson, applied here
   proactively).
 
@@ -192,7 +192,7 @@ by construction and can never disagree about what "this month" means.
 - Current snapshot/6-month history: unchanged, reused as-is
   (`accounting::get_net_worth`/`get_net_worth_history`).
 - New `accounting::net_worth_change(from, to)`: `start_cents` (as of the day
-  *before* `from`, so `from` itself is inclusive like every other Insights
+  _before_ `from`, so `from` itself is inclusive like every other Insights
   range), `end_cents` (as of `to`), `change_cents`, and per-account
   `contributions` already expressed as **net-worth impact** (a liability
   that grew shows negative, even though its own ledger amount moved
@@ -223,7 +223,7 @@ by construction and can never disagree about what "this month" means.
   balance), skipped occurrences, and stale missed ones.
 - **Transfers deliberately excluded** (section 45): a `Direction::Transfer`
   occurrence is skipped. MIDAS has no reliable link from a transfer-direction
-  series to the specific *other* account/series it pairs with, so
+  series to the specific _other_ account/series it pairs with, so
   projecting only one leg would misrepresent the balance - omitting it is
   more honest than guessing, per the handoff's own escape hatch.
 - **Credit-card behavior (section 46)**: a subscription billed to a credit
@@ -238,7 +238,7 @@ by construction and can never disagree about what "this month" means.
   compares the series' own `max_amount_cents - min_amount_cents` against
   the same `amount_tolerance` window price-change detection already uses.
   A variable series projects its **median** magnitude with `Certainty::
-  Estimated`; a consistent one projects its literal `expected_amount_cents`
+Estimated`; a consistent one projects its literal `expected_amount_cents`
   with `Certainty::Expected`. Only two tiers are surfaced (never a third
   "Known" tag on events) - "known" describes the current starting balance
   itself, a fact rather than a projection, and isn't a per-event label.
@@ -248,7 +248,7 @@ by construction and can never disagree about what "this month" means.
   order, and calling `project` twice with no state change produces
   byte-identical output (proven in a test).
 - **Lowest balance**: a running minimum over `[current_balance, ...each
-  event's post-balance]`, so a mid-horizon dip that later recovers is still
+event's post-balance]`, so a mid-horizon dip that later recovers is still
   correctly identified, not just the final balance.
 - **Reserve warning (sections 50-51)**: reuses `safe_to_spend::get_reserve`
   directly; a `0` (unset) reserve produces no warning (matching how Safe to
@@ -259,7 +259,7 @@ by construction and can never disagree about what "this month" means.
   actually generated to, so a request beyond it could never silently miss a
   real bill that simply hasn't been materialized yet.
 - **Scope (section 39)**: one function, `project(conn, account_ids,
-  horizon_days)`, serves both the per-account view (one id) and the
+horizon_days)`, serves both the per-account view (one id) and the
   combined view (every eligible-cash id) - not two near-duplicate
   functions.
 - **What-if scenarios (section 52) deliberately deferred** - explicitly
@@ -280,7 +280,7 @@ by construction and can never disagree about what "this month" means.
 - `ForecastPage.tsx` is a new, separate destination (section 53: Insights
   is "what happened," Forecast is "what's expected") with its own account
   selector and 7/14/30-day horizon control; an event whose amount is
-  `Estimated` gets a dashed left border *in addition to* its explicit
+  `Estimated` gets a dashed left border _in addition to_ its explicit
   "(Estimated)" text label - never color/line-style alone (sections 54,
   64, 100).
 - Comparison lines spell out direction in words ("$174.22 (36.7%) less
@@ -290,7 +290,7 @@ by construction and can never disagree about what "this month" means.
   relying on color alone.
 - A real layout bug was found live (see Native Verification): the Insights
   tab strip reused the sidebar's own `.sidebar-link` class, which is
-  `display: block; width: 100%` for a *vertical* nav list - inside a `flex`
+  `display: block; width: 100%` for a _vertical_ nav list - inside a `flex`
   tab strip this rendered as a stacked column instead of a row. Fixed with
   dedicated `.insights-tab-button`/`.insights-tab-button-active` styles
   (gold underline, sized to content).
@@ -324,10 +324,10 @@ payee reassignment).
 
 **A real, pre-existing data-hygiene gap was found and fixed**: prior
 batches' own native-verification cleanup only ever archived their test
-*accounts*, never the transactions on them - and since neither
+_accounts_, never the transactions on them - and since neither
 `spending_in_range` nor `income_in_range` filter by `account.is_archived`
 (only by the transaction's own archive flag, which is correct for
-per-account balances but means a *global*, date-scoped total still counts
+per-account balances but means a _global_, date-scoped total still counts
 an archived account's transactions), 80 leftover transactions from Batches
 5/5.1/6/7 were silently inflating every current-month global figure -
 invisible until Insights' Spending tab became the first feature to
