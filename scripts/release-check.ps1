@@ -43,7 +43,11 @@ try {
         'src-tauri/Cargo.toml'  = $cargoVersion
         'tauri.conf.json'       = $tauriConf.version
     }
-    $distinct = $versions.Values | Select-Object -Unique
+    # @(...) forces array semantics - a bare `Select-Object -Unique` result
+    # collapses to a plain string when there's exactly one distinct value,
+    # and indexing a string with [0] returns its first *character*, not
+    # the whole value (found live: this printed "Version aligned at 1").
+    $distinct = @($versions.Values | Select-Object -Unique)
     if ($distinct.Count -ne 1) {
         $report = ($versions.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ', '
         throw "Version mismatch across manifests: $report"
