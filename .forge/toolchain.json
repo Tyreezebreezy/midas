@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "tools": {
+    "node": {
+      "required": true,
+      "minInclusive": "22.0.0",
+      "maxExclusive": "25.0.0"
+    },
+    "npm": {
+      "required": true,
+      "minInclusive": "10.0.0",
+      "maxExclusive": "12.0.0"
+    },
+    "rustc": {
+      "required": true,
+      "minInclusive": "1.85.0",
+      "maxExclusive": "2.0.0"
+    },
+    "cargo": {
+      "required": true,
+      "minInclusive": "1.85.0",
+      "maxExclusive": "2.0.0"
+    },
+    "python": {
+      "required": false,
+      "minInclusive": "3.11.0",
+      "maxExclusive": "3.14.0"
+    },
+    "powershell": {
+      "required": true,
+      "minInclusive": "5.1.0",
+      "maxExclusive": "8.0.0"
+    },
+    "git": {
+      "required": true,
+      "minInclusive": "2.40.0",
+      "maxExclusive": "3.0.0"
+    }
+  }
+}

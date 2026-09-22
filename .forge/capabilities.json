@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 2,
+  "projectId": "midas",
+  "capabilities": {
+    "filesystem": {
+      "enabled": true,
+      "mode": "read-write",
+      "scopes": [
+        "Application-owned MIDAS database",
+        "Owner-selected import, export, backup, and restore paths"
+      ],
+      "justification": "Import statements and provide owner-controlled backup, restore, and export through narrow Rust commands."
+    },
+    "network": {
+      "enabled": false,
+      "mode": "none",
+      "scopes": [],
+      "justification": ""
+    },
+    "microphone": {
+      "enabled": false,
+      "mode": "none",
+      "scopes": [],
+      "justification": ""
+    },
+    "camera": {
+      "enabled": false,
+      "mode": "none",
+      "scopes": [],
+      "justification": ""
+    },
+    "notifications": {
+      "enabled": false,
+      "mode": "none",
+      "scopes": [],
+      "justification": ""
+    },
+    "localDatabase": {
+      "enabled": true,
+      "mode": "read-write",
+      "scopes": ["Application-owned midas.sqlite3"],
+      "justification": "Persist the owner-controlled financial ledger and application settings."
+    },
+    "modelAccess": {
+      "enabled": false,
+      "mode": "none",
+      "scopes": [],
+      "justification": ""
+    },
+    "externalIntegrations": {
+      "enabled": false,
+      "mode": "none",
+      "scopes": [],
+      "justification": ""
+    },
+    "shellProcess": {
+      "enabled": false,
+      "mode": "none",
+      "scopes": [],
+      "justification": ""
+    },
+    "localServices": {
+      "enabled": false,
+      "mode": "none",
+      "scopes": [],
+      "justification": ""
+    },
+    "privilegedApis": {
+      "enabled": false,
+      "mode": "none",
+      "scopes": [],
+      "justification": ""
+    }
+  }
+}

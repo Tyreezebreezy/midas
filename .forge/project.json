@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 2,
+  "id": "midas",
+  "name": "MIDAS",
+  "version": "1.0.0-rc.2",
+  "maturity": "development",
+  "platforms": ["windows"],
+  "stack": {
+    "languages": ["TypeScript", "Rust", "SQL"],
+    "frameworks": ["React", "Tauri"],
+    "packageManagers": ["npm", "Cargo"],
+    "runtimes": ["Node.js", "WebView2"]
+  },
+  "architecture": {
+    "type": "desktop",
+    "description": "Private local-first personal finance application with React presentation, Rust domain/native authority, and SQLite ledger truth."
+  },
+  "dataModel": {
+    "stateful": true,
+    "type": "local-database",
+    "description": "Application-owned SQLite database with ordered migrations, import provenance, backups, restore preview, and CSV export."
+  },
+  "quality": {
+    "requiredGates": [
+      "functional",
+      "visual",
+      "responsive",
+      "accessibility",
+      "performance",
+      "security",
+      "data",
+      "packaging",
+      "documentation",
+      "owner-review"
+    ],
+    "performanceBudgets": []
+  },
+  "governance": {
+    "operatingMode": "production",
+    "riskTier": "high",
+    "evidenceTier": "execution",
+    "uxRelevance": "primary",
+    "visualRelevance": "primary",
+    "interactionComplexity": "high",
+    "designSystemUsage": "application-specific",
+    "releaseAudience": "private",
+    "requirements": {
+      "ux": "mandatory",
+      "visual": "recommended",
+      "accessibility": "recommended",
+      "designSystem": "recommended",
+      "research": "optional",
+      "design": "recommended",
+      "repositoryPresentation": "mandatory",
+      "userFacingRelease": "app-specific"
+    }
+  },
+  "integrations": { "icarusLevel": "none" },
+  "release": {
+    "currentChannel": "rc",
+    "supportedChannels": ["dev", "alpha", "beta", "rc", "stable"],
+    "promotionRequirements": {
+      "dev": ["build", "financial-tests"],
+      "alpha": ["dev", "migration-tests", "import-integrity"],
+      "beta": ["alpha", "runtime-ux", "security-validation"],
+      "rc": ["beta", "backup-restore", "packaging", "artifact-integrity"],
+      "stable": ["rc", "owner-release-approval"]
+    }
+  },
+  "controls": {
+    "capabilities": "capabilities.json",
+    "toolchain": "toolchain.json",
+    "dataOwnership": "DATA_OWNERSHIP.md",
+    "migrations": "migrations.json",
+    "dependencies": "dependencies.json",
+    "architectureFitness": "architecture-fitness.json",
+    "evidence": "evidence.json",
+    "uxContract": "../docs/forge/UX_CONTRACT.md",
+    "designContract": "../docs/forge/DESIGN_CONTRACT.md"
+  }
+}

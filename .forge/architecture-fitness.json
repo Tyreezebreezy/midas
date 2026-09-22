@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "projectId": "midas",
+  "rules": [
+    {
+      "id": "base-tauri-config-must-stay-dev-identified",
+      "type": "forbidden-text",
+      "include": "src-tauri/tauri.conf.json",
+      "pattern": "\"identifier\": \"com.breezy.midas\"",
+      "severity": "error",
+      "remediation": "The base src-tauri/tauri.conf.json identifier must stay com.breezy.midas.dev so a bare `npm run tauri dev`/`tauri build` can never touch the production app-data directory. The real production identifier (com.breezy.midas) belongs only in src-tauri/tauri.prod.conf.json, applied explicitly via `npm run package`."
+    }
+  ]
+}

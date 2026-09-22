@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "projectId": "midas",
+  "dependencies": [
+    {
+      "name": "tauri",
+      "ecosystem": "cargo+npm",
+      "purpose": "Desktop application shell: window, IPC, NSIS packaging.",
+      "scope": "runtime",
+      "reason": "Chosen at project start for a local-first Windows desktop app with a Rust backend and web-based UI, without an Electron/Chromium bundle.",
+      "alternatives": ["Electron", "wxWidgets/native GUI"],
+      "introducedVersion": "2.0",
+      "introducedDate": "2026-08-25",
+      "owner": "Tyree",
+      "securityRelevant": true,
+      "license": "Apache-2.0 OR MIT",
+      "status": "active"
+    },
+    {
+      "name": "react",
+      "ecosystem": "npm",
+      "purpose": "UI rendering.",
+      "scope": "runtime",
+      "reason": "Matches the Forge tauri-react-windows starter this project was scaffolded from.",
+      "alternatives": ["Svelte", "Vue", "SolidJS"],
+      "introducedVersion": "19.1.0",
+      "introducedDate": "2026-08-25",
+      "owner": "Tyree",
+      "securityRelevant": false,
+      "license": "MIT",
+      "status": "active"
+    },
+    {
+      "name": "typescript",
+      "ecosystem": "npm",
+      "purpose": "Static typing for the frontend.",
+      "scope": "development",
+      "reason": "2026-09-21 modernization pass: pinned to the 6.x line deliberately, not the newer 7.x line. TypeScript 7.0 is a full rewrite of the compiler in Go and ships with no public programmatic compiler API yet (Microsoft's own stated plan is to add a new, different API in 7.1); any build tooling that imports `typescript` as a library cannot run on 7.x without a compatibility shim. 6.0.3 is the last release on the mature, structurally-identical JS-codebase compiler and is API-compatible with what this project already depends on. Revisit once 7.x's API story and the wider npm ecosystem's compatibility settle.",
+      "alternatives": ["typescript@7.x (rejected for now)"],
+      "introducedVersion": "6.0.3",
+      "introducedDate": "2026-09-21",
+      "owner": "Tyree",
+      "securityRelevant": false,
+      "license": "Apache-2.0",
+      "status": "active"
+    },
+    {
+      "name": "vite",
+      "ecosystem": "npm",
+      "purpose": "Frontend build tool and dev server.",
+      "scope": "build",
+      "reason": "2026-09-21 modernization pass: bumped to the current stable 8.x line together with @vitejs/plugin-react 6.x, since plugin-react 6 requires vite ^8 as a peer dependency - the two must move as one coherent pair.",
+      "alternatives": ["webpack", "esbuild directly", "Rspack"],
+      "introducedVersion": "8.3.0",
+      "introducedDate": "2026-09-21",
+      "owner": "Tyree",
+      "securityRelevant": false,
+      "license": "MIT",
+      "status": "active"
+    },
+    {
+      "name": "rusqlite",
+      "ecosystem": "cargo",
+      "purpose": "Bundled SQLite driver; sole persistence layer.",
+      "scope": "runtime",
+      "reason": "Local-first, zero-network, single-file financial ledger with ordered migrations via PRAGMA user_version.",
+      "alternatives": ["sqlx", "diesel"],
+      "introducedVersion": "0.40.2",
+      "introducedDate": "2026-08-25",
+      "owner": "Tyree",
+      "securityRelevant": true,
+      "license": "MIT",
+      "status": "active"
+    },
+    {
+      "name": "quick-xml",
+      "ecosystem": "cargo",
+      "purpose": "OFX/QFX statement parsing (hand-rolled SGML-to-XML normalizer over this XML reader).",
+      "scope": "runtime",
+      "reason": "ADR-0010: the handoff's preferred ofx-rs was rejected for two unfixable HIGH-severity RUSTSEC advisories in a hard-pinned transitive quick-xml version; quick-xml was already transitively present via Tauri, so depending on it directly was a net one-version-bump, not a new dependency. Held at 0.41.0 through the 2026-09-21 modernization pass - the newer 0.42.0 line exists but was not adopted for the direct edge, since a 0.x -> 0.y bump is semver-major for a pre-1.0 crate and the parser is release-hardened, real-world-tested OFX/QFX code with no reported defect motivating the churn.",
+      "alternatives": [
+        "ofx-rs (rejected, see ADR-0010)",
+        "quick-xml 0.42 (deferred)"
+      ],
+      "introducedVersion": "0.41.0",
+      "introducedDate": "2026-09-13",
+      "owner": "Tyree",
+      "securityRelevant": true,
+      "license": "MIT",
+      "status": "active"
+    },
+    {
+      "name": "chrono",
+      "ecosystem": "cargo",
+      "purpose": "Calendar-correct date arithmetic (month/leap-year handling) for recurring patterns, budgets, and reconciliation periods.",
+      "scope": "runtime",
+      "reason": "ADR-0008: superseded a hand-rolled day-counting implementation once Phase 4B's calendar needs (month-end anchoring, leap years) exceeded simple day arithmetic. default-features = false, only the std feature, to keep the dependency narrow.",
+      "alternatives": ["time crate", "hand-rolled (superseded, see ADR-0008)"],
+      "introducedVersion": "0.4.42",
+      "introducedDate": "2026-08-25",
+      "owner": "Tyree",
+      "securityRelevant": false,
+      "license": "MIT OR Apache-2.0",
+      "status": "active"
+    }
+  ]
+}

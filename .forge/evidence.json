@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 1,
+  "projectId": "midas",
+  "claims": [
+    {
+      "id": "CLAIM-0001",
+      "class": "ux",
+      "requirement": "mandatory",
+      "statement": "Import transactions stages and validates source rows, exposes duplicates and malformed data, and commits only after owner confirmation.",
+      "status": "PASS",
+      "evidence": [
+        {
+          "level": "runtime",
+          "type": "file",
+          "source": "specs/phase-018-release-hardening/spec.md",
+          "observedAt": "2026-09-14",
+          "notes": "CSV/OFX edge-case hardening, import stress test, and the Import Undo protection path re-verified live for Desktop 1.0 RC1."
+        }
+      ]
+    },
+    {
+      "id": "CLAIM-0002",
+      "class": "data",
+      "requirement": "mandatory",
+      "statement": "Committed migrations preserve existing financial data and failure paths retain a recoverable owner-controlled database.",
+      "status": "PASS",
+      "evidence": [
+        {
+          "level": "execution",
+          "type": "file",
+          "source": "specs/phase-018-release-hardening/spec.md",
+          "observedAt": "2026-09-14",
+          "notes": "Migration 0014 (current) verified both fresh and upgraded from a genuine v0.1.0 database through the real application startup path; db.rs carries per-boundary regression tests for every step."
+        }
+      ]
+    },
+    {
+      "id": "CLAIM-0003",
+      "class": "repository",
+      "requirement": "mandatory",
+      "statement": "The committed MIDAS repository passes the Forge read-only Repo Polish Pass.",
+      "status": "PASS",
+      "evidence": [
+        {
+          "level": "execution",
+          "type": "command",
+          "source": "Forge scripts/validate-repository.ps1 -ProjectRoot C:/Dev/midas",
+          "observedAt": "2026-09-21"
+        }
+      ]
+    },
+    {
+      "id": "CLAIM-0004",
+      "class": "security",
+      "requirement": "recommended",
+      "statement": "The adoption branch has no secrets and its committed lockfiles have no known HIGH or CRITICAL vulnerability in the local scanner database.",
+      "status": "PASS",
+      "evidence": [
+        {
+          "level": "execution",
+          "type": "command",
+          "source": "gitleaks and local Trivy scans recorded in specs/phase-018-release-hardening/spec.md",
+          "observedAt": "2026-09-14"
+        }
+      ]
+    },
+    {
+      "id": "CLAIM-0005",
+      "class": "visual",
+      "requirement": "recommended",
+      "statement": "The implemented MIDAS interface follows the approved green-and-gold hierarchy across its tested desktop sizes and themes.",
+      "status": "PASS",
+      "evidence": [
+        {
+          "level": "runtime",
+          "type": "file",
+          "source": "specs/phase-017-product-polish/spec.md",
+          "observedAt": "2026-09-13",
+          "notes": "Design-system consolidation pass (badge/button tiers, page-toolbar naming, tablist roles) plus phase-018's own light/dark and 1024x640 spot check."
+        }
+      ]
+    },
+    {
+      "id": "CLAIM-0006",
+      "class": "accessibility",
+      "requirement": "recommended",
+      "statement": "The committed recurring workflow has semantic controls, accessible names, text statuses, focus behavior, and two-size runtime evidence.",
+      "status": "PASS",
+      "evidence": [
+        {
+          "level": "runtime",
+          "type": "file",
+          "source": "specs/phase-013-recurring-intelligence/spec.md",
+          "observedAt": "2026-09-13",
+          "notes": "phase-018 additionally re-confirmed native <dialog>/showModal() focus-trap and aria-labelledby semantics for the transaction-entry dialog."
+        }
+      ]
+    },
+    {
+      "id": "CLAIM-0007",
+      "class": "design",
+      "requirement": "recommended",
+      "statement": "The current implementation preserves MIDAS's approved financial hierarchy and restrained green-and-gold design system.",
+      "status": "PASS",
+      "evidence": [
+        {
+          "level": "runtime",
+          "type": "file",
+          "source": "specs/phase-017-product-polish/spec.md",
+          "observedAt": "2026-09-13"
+        }
+      ]
+    }
+  ]
+}

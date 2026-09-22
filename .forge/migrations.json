@@ -1,0 +1,250 @@
+{
+  "schemaVersion": 1,
+  "projectId": "midas",
+  "persistence": "structured-data",
+  "engine": "SQLite ordered embedded SQL with PRAGMA user_version",
+  "currentSchemaVersion": 14,
+  "strategy": {
+    "automatic": true,
+    "rollback": false,
+    "manualIntervention": false,
+    "backupStrategy": "sqlite-backup"
+  },
+  "migrations": [
+    {
+      "id": "0001-initial",
+      "order": 1,
+      "fromVersion": 0,
+      "toVersion": 1,
+      "direction": "upgrade",
+      "status": "applied",
+      "validation": [
+        "accounts and settings tables created on a fresh database"
+      ],
+      "downSupported": false,
+      "failureHandling": {
+        "stopDestructiveOperations": true,
+        "preserveDiagnostics": true,
+        "recoveryProcedure": "Restore an owner-verified SQLite backup through the documented preview-and-confirm workflow."
+      }
+    },
+    {
+      "id": "0002-transactions",
+      "order": 2,
+      "fromVersion": 1,
+      "toVersion": 2,
+      "direction": "upgrade",
+      "status": "applied",
+      "validation": ["transactions table and sign convention established"],
+      "downSupported": false,
+      "failureHandling": {
+        "stopDestructiveOperations": true,
+        "preserveDiagnostics": true,
+        "recoveryProcedure": "Restore an owner-verified SQLite backup through the documented preview-and-confirm workflow."
+      }
+    },
+    {
+      "id": "0003-rules-and-recurring",
+      "order": 3,
+      "fromVersion": 2,
+      "toVersion": 3,
+      "direction": "upgrade",
+      "status": "applied",
+      "validation": [
+        "merchant rules and the original recurring series table created"
+      ],
+      "downSupported": false,
+      "failureHandling": {
+        "stopDestructiveOperations": true,
+        "preserveDiagnostics": true,
+        "recoveryProcedure": "Restore an owner-verified SQLite backup through the documented preview-and-confirm workflow."
+      }
+    },
+    {
+      "id": "0004-accounting-boundary",
+      "order": 4,
+      "fromVersion": 3,
+      "toVersion": 4,
+      "direction": "upgrade",
+      "status": "applied",
+      "validation": [
+        "opening_balance transaction type introduced; balances computed live from transactions"
+      ],
+      "downSupported": false,
+      "failureHandling": {
+        "stopDestructiveOperations": true,
+        "preserveDiagnostics": true,
+        "recoveryProcedure": "Restore an owner-verified SQLite backup through the documented preview-and-confirm workflow."
+      }
+    },
+    {
+      "id": "0005-budgets",
+      "order": 5,
+      "fromVersion": 4,
+      "toVersion": 5,
+      "direction": "upgrade",
+      "status": "applied",
+      "validation": ["per-category-per-month budgets table created"],
+      "downSupported": false,
+      "failureHandling": {
+        "stopDestructiveOperations": true,
+        "preserveDiagnostics": true,
+        "recoveryProcedure": "Restore an owner-verified SQLite backup through the documented preview-and-confirm workflow."
+      }
+    },
+    {
+      "id": "0006-savings-goals",
+      "order": 6,
+      "fromVersion": 5,
+      "toVersion": 6,
+      "direction": "upgrade",
+      "status": "applied",
+      "validation": ["savings goals table created"],
+      "downSupported": false,
+      "failureHandling": {
+        "stopDestructiveOperations": true,
+        "preserveDiagnostics": true,
+        "recoveryProcedure": "Restore an owner-verified SQLite backup through the documented preview-and-confirm workflow."
+      }
+    },
+    {
+      "id": "0007-balance-adjustment",
+      "order": 7,
+      "fromVersion": 6,
+      "toVersion": 7,
+      "direction": "upgrade",
+      "status": "applied",
+      "validation": [
+        "balance_adjustment transaction type separated from the immutable opening_balance anchor"
+      ],
+      "downSupported": false,
+      "failureHandling": {
+        "stopDestructiveOperations": true,
+        "preserveDiagnostics": true,
+        "recoveryProcedure": "Restore an owner-verified SQLite backup through the documented preview-and-confirm workflow."
+      }
+    },
+    {
+      "id": "0008-foundation-batch-1",
+      "order": 8,
+      "fromVersion": 7,
+      "toVersion": 8,
+      "direction": "upgrade",
+      "status": "applied",
+      "validation": [
+        "payees/tags/transaction_tags/import_profiles tables added",
+        "v0.1.0 databases upgrade with existing accounts/transactions preserved byte-identical (see src-tauri/src/db.rs tests)"
+      ],
+      "downSupported": false,
+      "failureHandling": {
+        "stopDestructiveOperations": true,
+        "preserveDiagnostics": true,
+        "recoveryProcedure": "Restore an owner-verified SQLite backup through the documented preview-and-confirm workflow."
+      }
+    },
+    {
+      "id": "0009-import-engine-v2",
+      "order": 9,
+      "fromVersion": 8,
+      "toVersion": 9,
+      "direction": "upgrade",
+      "status": "applied",
+      "validation": [
+        "import profile archiving and Import History columns added"
+      ],
+      "downSupported": false,
+      "failureHandling": {
+        "stopDestructiveOperations": true,
+        "preserveDiagnostics": true,
+        "recoveryProcedure": "Restore an owner-verified SQLite backup through the documented preview-and-confirm workflow."
+      }
+    },
+    {
+      "id": "0010-ofx-source-adapter",
+      "order": 10,
+      "fromVersion": 9,
+      "toVersion": 10,
+      "direction": "upgrade",
+      "status": "applied",
+      "validation": [
+        "ofx_account_mappings table added for opt-in statement-to-account linking"
+      ],
+      "downSupported": false,
+      "failureHandling": {
+        "stopDestructiveOperations": true,
+        "preserveDiagnostics": true,
+        "recoveryProcedure": "Restore an owner-verified SQLite backup through the documented preview-and-confirm workflow."
+      }
+    },
+    {
+      "id": "0011-reconciliation",
+      "order": 11,
+      "fromVersion": 10,
+      "toVersion": 11,
+      "direction": "upgrade",
+      "status": "applied",
+      "validation": [
+        "reconciliations table and transactions.reconciliation_id added"
+      ],
+      "downSupported": false,
+      "failureHandling": {
+        "stopDestructiveOperations": true,
+        "preserveDiagnostics": true,
+        "recoveryProcedure": "Restore an owner-verified SQLite backup through the documented preview-and-confirm workflow."
+      }
+    },
+    {
+      "id": "0012-transaction-intelligence",
+      "order": 12,
+      "fromVersion": 11,
+      "toVersion": 12,
+      "direction": "upgrade",
+      "status": "applied",
+      "validation": [
+        "transaction_splits child table added; parent amount/account/reconciliation never rewritten"
+      ],
+      "downSupported": false,
+      "failureHandling": {
+        "stopDestructiveOperations": true,
+        "preserveDiagnostics": true,
+        "recoveryProcedure": "Restore an owner-verified SQLite backup through the documented preview-and-confirm workflow."
+      }
+    },
+    {
+      "id": "0013-recurring-intelligence",
+      "order": 13,
+      "fromVersion": 12,
+      "toVersion": 13,
+      "direction": "upgrade",
+      "status": "applied",
+      "validation": [
+        "existing recurring series survive with direction backfilled",
+        "recurring occurrences are idempotent and never duplicate ledger rows"
+      ],
+      "downSupported": false,
+      "failureHandling": {
+        "stopDestructiveOperations": true,
+        "preserveDiagnostics": true,
+        "recoveryProcedure": "Restore an owner-verified SQLite backup through the documented preview-and-confirm workflow."
+      }
+    },
+    {
+      "id": "0014-budget-intelligence",
+      "order": 14,
+      "fromVersion": 13,
+      "toVersion": 14,
+      "direction": "upgrade",
+      "status": "applied",
+      "validation": [
+        "budgets.classification gains Discretionary without rewriting existing rows",
+        "rollover/pace are computed live, never stored, so no backfill is required"
+      ],
+      "downSupported": false,
+      "failureHandling": {
+        "stopDestructiveOperations": true,
+        "preserveDiagnostics": true,
+        "recoveryProcedure": "Restore an owner-verified SQLite backup through the documented preview-and-confirm workflow."
+      }
+    }
+  ]
+}
