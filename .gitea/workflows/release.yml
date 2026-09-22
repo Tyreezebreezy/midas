@@ -1,0 +1,186 @@
+name: Release
+
+# Triggered by pushing a version tag (v1.0.0-rc.2, v1.0.0, v1.0.1, ...).
+# Builds the Windows installer from the exact tagged commit, validates it,
+# and publishes a private Gitea Release with the installer, its SHA-256,
+# and a machine-readable release manifest attached. Fails closed: if any
+# step fails, no release is published.
+#
+# Requires the same self-hosted Windows runner prerequisites as
+# validate.yml (see that file's header comment). Uses only the
+# automatically-issued per-job token (secrets.GITEA_TOKEN) - this repo's
+# Actions Token Permissions are already set to Permissive, so no manual
+# secret needs to be created (Settings -> Actions -> General).
+#
+# Release notes are read from docs/release/<version>.md, matching this
+# project's existing convention (see docs/release/0.1.0.md and
+# docs/release/1.0.0-rc.1.md). Publication fails if that file is missing
+# rather than inventing release text.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: self-hosted-windows
+    steps:
+      - name: Checkout the exact tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node (from .node-version)
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: ".node-version"
+          cache: "npm"
+
+      - name: Install frontend dependencies (locked)
+        run: npm ci
+
+      - name: Validate tag matches declared versions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = "${{ gitea.ref_name }}"
+          if ($tag -notmatch '^v(.+)$') { throw "Tag '$tag' does not look like a version tag (expected vX.Y.Z...)." }
+          $version = $Matches[1]
+
+          $pkg = Get-Content -Raw package.json | ConvertFrom-Json
+          $cargoVersion = [regex]::Match((Get-Content -Raw src-tauri/Cargo.toml), '(?m)^version\s*=\s*"([^"]+)"').Groups[1].Value
+          $tauriConf = Get-Content -Raw src-tauri/tauri.conf.json | ConvertFrom-Json
+          $prodConf = Get-Content -Raw src-tauri/tauri.prod.conf.json | ConvertFrom-Json
+
+          foreach ($pair in @(
+              @{ name = 'package.json'; value = $pkg.version },
+              @{ name = 'src-tauri/Cargo.toml'; value = $cargoVersion },
+              @{ name = 'src-tauri/tauri.conf.json'; value = $tauriConf.version }
+          )) {
+              if ($pair.value -ne $version) {
+                  throw "Tag says version $version but $($pair.name) says $($pair.value)."
+              }
+          }
+          if ($tauriConf.identifier -ne 'com.breezy.midas.dev') { throw 'Base tauri.conf.json must stay on the dev identifier.' }
+          if ($prodConf.identifier -ne 'com.breezy.midas') { throw 'tauri.prod.conf.json must declare the real production identifier.' }
+
+          $notesPath = "docs/release/$version.md"
+          if (-not (Test-Path $notesPath)) { throw "Missing release notes at $notesPath - publication requires real, written notes, not generated text." }
+
+          "MIDAS_VERSION=$version" >> $env:GITHUB_ENV
+          "MIDAS_NOTES_PATH=$notesPath" >> $env:GITHUB_ENV
+          "MIDAS_PRERELEASE=$(($version -match '-') | ForEach-Object { $_.ToString().ToLower() })" >> $env:GITHUB_ENV
+          Write-Host "Releasing version $version (prerelease=$($version -match '-'))"
+
+      - name: Full development gate (frontend + Rust fmt/check/clippy/test/audit)
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1
+
+      - name: Security scans
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Get-Command gitleaks -ErrorAction SilentlyContinue)) { throw 'gitleaks is required on the release runner and was not found.' }
+          gitleaks detect --redact
+          if ($LASTEXITCODE -ne 0) { throw 'Gitleaks found a potential secret.' }
+
+          if (-not (Get-Command trivy -ErrorAction SilentlyContinue)) { throw 'trivy is required on the release runner and was not found.' }
+          trivy fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 --skip-version-check .
+          if ($LASTEXITCODE -ne 0) { throw 'Trivy found a new CRITICAL or HIGH finding.' }
+
+      - name: Build the Windows installer (production identity)
+        shell: pwsh
+        run: npm run package
+
+      - name: Locate installer, hash it, write the release manifest
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bundleDir = 'src-tauri/target/release/bundle/nsis'
+          $installer = Get-ChildItem $bundleDir -Filter 'MIDAS_*_x64-setup.exe' | Select-Object -First 1
+          if (-not $installer) { throw "No installer found under $bundleDir." }
+
+          $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLower()
+          "$hash *$($installer.Name)" | Set-Content -Encoding ascii "$($installer.FullName).sha256"
+
+          $lockHash = (Get-FileHash package-lock.json -Algorithm SHA256).Hash.ToLower()
+          $cargoLockHash = (Get-FileHash src-tauri/Cargo.lock -Algorithm SHA256).Hash.ToLower()
+          $commit = (git rev-parse HEAD).Trim()
+          $rustVersion = (rustc --version).Trim()
+          $nodeVersion = (node --version).Trim()
+
+          $manifest = [ordered]@{
+              product      = 'MIDAS'
+              version      = $env:MIDAS_VERSION
+              commit       = $commit
+              tag          = "${{ gitea.ref_name }}"
+              platform     = 'windows-x64'
+              artifact     = $installer.Name
+              sha256       = $hash
+              schema_version = 14
+              node         = $nodeVersion
+              rust         = $rustVersion
+              lockfiles    = @{
+                  'package-lock.json'    = $lockHash
+                  'src-tauri/Cargo.lock' = $cargoLockHash
+              }
+          }
+          $manifestPath = Join-Path $bundleDir 'release-manifest.json'
+          ($manifest | ConvertTo-Json -Depth 5) | Set-Content -Encoding utf8 $manifestPath
+
+          "MIDAS_INSTALLER_PATH=$($installer.FullName)" >> $env:GITHUB_ENV
+          "MIDAS_CHECKSUM_PATH=$($installer.FullName).sha256" >> $env:GITHUB_ENV
+          "MIDAS_MANIFEST_PATH=$manifestPath" >> $env:GITHUB_ENV
+          "MIDAS_SHA256=$hash" >> $env:GITHUB_ENV
+          Write-Host "Installer: $($installer.Name) ($hash)"
+
+      - name: Re-verify the freshly built installer's hash independently
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $recomputed = (Get-FileHash $env:MIDAS_INSTALLER_PATH -Algorithm SHA256).Hash.ToLower()
+          if ($recomputed -ne $env:MIDAS_SHA256) { throw "Hash mismatch: recorded $($env:MIDAS_SHA256) vs recomputed $recomputed" }
+          Write-Host "Hash re-verified: $recomputed"
+
+      - name: Create the private Gitea Release and attach assets
+        shell: pwsh
+        env:
+          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $apiBase = "${{ gitea.server_url }}/api/v1/repos/${{ gitea.repository }}"
+          $headers = @{ Authorization = "token $env:GITEA_TOKEN" }
+          $notes = Get-Content -Raw $env:MIDAS_NOTES_PATH
+
+          $body = @{
+              tag_name   = "${{ gitea.ref_name }}"
+              name       = "MIDAS $($env:MIDAS_VERSION)"
+              body       = $notes
+              draft      = $false
+              prerelease = [bool]::Parse($env:MIDAS_PRERELEASE)
+          } | ConvertTo-Json
+
+          $release = Invoke-RestMethod -Uri "$apiBase/releases" -Method Post -Headers $headers -ContentType 'application/json; charset=utf-8' -Body $body
+          Write-Host "Created release id $($release.id) at $($release.html_url)"
+
+          foreach ($path in @($env:MIDAS_INSTALLER_PATH, $env:MIDAS_CHECKSUM_PATH, $env:MIDAS_MANIFEST_PATH)) {
+              $name = Split-Path $path -Leaf
+              $uploadUri = "$apiBase/releases/$($release.id)/assets?name=$name"
+              Invoke-RestMethod -Uri $uploadUri -Method Post -Headers $headers -InFile $path -ContentType 'application/octet-stream' | Out-Null
+              Write-Host "Uploaded $name"
+          }
+
+          "MIDAS_RELEASE_URL=$($release.html_url)" >> $env:GITHUB_ENV
+
+      - name: Summary
+        shell: pwsh
+        run: |
+          Write-Host "MIDAS_RELEASE=PASS"
+          Write-Host "Version:   $env:MIDAS_VERSION"
+          Write-Host "Installer: $env:MIDAS_INSTALLER_PATH"
+          Write-Host "SHA-256:   $env:MIDAS_SHA256"
+          Write-Host "Release:   $env:MIDAS_RELEASE_URL"

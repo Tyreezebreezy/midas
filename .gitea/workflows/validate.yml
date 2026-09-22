@@ -1,0 +1,70 @@
+name: Validate
+
+# Requires a self-hosted Windows runner registered with the
+# `self-hosted-windows` label (Settings -> Actions -> Runners in this
+# repo). Gitea has no hosted Windows runner, and Tauri's NSIS/WebView2
+# toolchain needs a real Windows host, not a Linux container - this is
+# the same machine profile any MIDAS developer already builds on.
+#
+# The runner host must have Rust (via rustup, so rust-toolchain.toml is
+# honored automatically) and the Tauri Windows prerequisites (MSVC build
+# tools, WebView2) already installed, matching README.md's own
+# "Development" requirements. actions/checkout and actions/setup-node are
+# fetched from GitHub, so the runner needs outbound network access to
+# GitHub's Actions marketplace (or a configured local mirror) for those
+# two steps - everything after that runs offline against the repo's own
+# lockfiles.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: self-hosted-windows
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Setup Node (from .node-version)
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: ".node-version"
+          cache: "npm"
+
+      - name: Install frontend dependencies (locked)
+        run: npm ci
+
+      - name: Report toolchain versions
+        shell: pwsh
+        run: |
+          node --version
+          npm --version
+          rustc --version
+          cargo --version
+
+      - name: Full development gate (frontend + Rust fmt/check/clippy/test/audit)
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1
+
+      - name: Gitleaks (if installed on the runner)
+        shell: pwsh
+        run: |
+          if (Get-Command gitleaks -ErrorAction SilentlyContinue) {
+            gitleaks detect --redact
+          } else {
+            Write-Host "gitleaks not installed on this runner - skipping. Install it on the runner host to enable this check."
+          }
+
+      - name: Trivy (if installed on the runner)
+        shell: pwsh
+        run: |
+          if (Get-Command trivy -ErrorAction SilentlyContinue) {
+            trivy fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 --skip-version-check .
+          } else {
+            Write-Host "trivy not installed on this runner - skipping. Install it on the runner host to enable this check."
+          }
