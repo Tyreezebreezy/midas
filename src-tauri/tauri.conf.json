@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "MIDAS",
-  "version": "1.0.0-rc.1",
-  "identifier": "com.breezy.midas",
+  "version": "1.0.0-rc.2",
+  "identifier": "com.breezy.midas.dev",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
