@@ -46,7 +46,7 @@ Compare the output against the `.sha256` file. Run the installer - it installs p
 
 ## Development
 
-Requirements: Node.js/npm, Rust/Cargo, and the Windows MSVC build tools / Tauri 2 Windows prerequisites (WebView2).
+Requirements: Node.js/npm (pinned in `.node-version`), Rust/Cargo via `rustup` (pinned in `rust-toolchain.toml`, so `cargo`/`rustc` auto-select the right version inside this repo), and the Windows MSVC build tools / Tauri 2 Windows prerequisites (WebView2).
 
 ```powershell
 npm.cmd install
@@ -55,7 +55,28 @@ cargo fmt --manifest-path src-tauri\Cargo.toml -- --check
 cargo check --locked --manifest-path src-tauri\Cargo.toml
 ```
 
-Run the desktop app with `npm.cmd run tauri dev`. Build the installer only inside an approved release phase with `npm.cmd run tauri build` (produces `src-tauri\target\release\bundle\nsis\MIDAS_<version>_x64-setup.exe`; hash it with `scripts\hash-artifacts.ps1`). Run the complete gate with `powershell -ExecutionPolicy Bypass -File scripts\validate.ps1` (frontend check, Rust fmt/check/clippy/test/audit). Security scans run separately each phase and aren't part of that script: `gitleaks detect`/`gitleaks protect`, `trivy fs`, and `npm audit`.
+**App-data identity is isolated by environment** so development and automated testing can never touch real data:
+
+| Command                  | Identifier              | App-data directory                | Purpose                                                        |
+| ------------------------ | ----------------------- | --------------------------------- | -------------------------------------------------------------- |
+| `npm.cmd run tauri dev`  | `com.breezy.midas.dev`  | `%APPDATA%\com.breezy.midas.dev`  | day-to-day development; data persists between sessions         |
+| `npm.cmd run tauri:test` | `com.breezy.midas.test` | `%APPDATA%\com.breezy.midas.test` | disposable, used by `scripts\smoke.ps1`; wiped after every run |
+| `npm.cmd run package`    | `com.breezy.midas`      | `%APPDATA%\com.breezy.midas`      | **the only command that may produce a real release installer** |
+
+The identifier lives in `src-tauri\tauri.conf.json` (base, dev-identified) and two small overlays merged in via Tauri's `--config` flag: `src-tauri\tauri.prod.conf.json` and `src-tauri\tauri.test.conf.json`. `.forge\architecture-fitness.json` enforces that the base config never reverts to the real production identifier.
+
+Local verification tooling (`scripts\`):
+
+- `verify.ps1` - the normal development gate: frontend format/typecheck/test/build, Rust fmt/check/clippy/test/audit. (`validate.ps1` is the same script kept under its original name for historical phase-record continuity.)
+- `release-check.ps1` - pre-tag release validation: clean tree on `main` in sync with `origin/main`, version consistency across every manifest, the full gate, and security scans (Gitleaks/Trivy).
+- `smoke.ps1` - launches the disposable test identity, confirms the app responds over its real Tauri IPC bridge, then tears everything down.
+- `hash-artifacts.ps1` - SHA-256 for one or more built files.
+
+Security scans run separately from `verify.ps1` (both are also in `release-check.ps1`): `gitleaks detect`, `trivy fs`, and `npm audit`.
+
+### CI/CD
+
+`.gitea\workflows\validate.yml` runs the same gate as `verify.ps1` on every push to `main`. `.gitea\workflows\release.yml` triggers on a pushed `v*` tag: validates the tag against every version manifest, runs the full gate and security scans, builds with `npm run package` (the production identity), hashes the installer, writes a release manifest, and publishes a private Gitea Release with the installer/checksum/manifest attached and matching `docs\release\<version>.md` notes - no manual browser step. Both need a self-hosted Windows runner (Gitea has no hosted Windows runner, and the NSIS/WebView2 build needs a real Windows host): register one under **Settings -> Actions -> Runners** with the label `self-hosted-windows`, on a host that already has this same Development section's prerequisites plus Gitleaks and Trivy on `PATH`. No manual secret is needed - both workflows use the automatically-issued per-job token, since this repo's Actions Token Permissions are already Permissive.
 
 ## Repository map
 
