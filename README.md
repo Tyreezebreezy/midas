@@ -1,6 +1,16 @@
 # MIDAS
 
-MIDAS is a private, local-first personal finance desktop application built with Tauri 2, React, TypeScript, and Rust. It answers "where do I stand financially, what needs my attention, and what's coming next?" without a cloud account, bank sync, or telemetry - your data never leaves your computer.
+A local-first personal finance app for Windows.
+
+I built MIDAS because I wanted one place for the numbers I actually check: what is in my accounts, which bills are coming, how the month is tracking against budget, and how much is safe to spend before the next paycheck. It doesn't sync with banks, doesn't need an account, and makes no network calls. Your data is one SQLite file on your computer. It is built with Tauri 2, React, TypeScript and Rust.
+
+## Current status
+
+- **Version:** `1.0.0-rc.2`, a release candidate. `v0.1.0` and `v1.0.0-rc.1` are tagged. There is no final 1.0 yet.
+- **Platform:** Windows only. Windows is the only platform built and tested.
+- **Screenshots:** none yet. MIDAS holds real financial data, so I only want to publish captures taken from a disposable test database, and I haven't produced those.
+- **License:** none chosen yet; all rights reserved for now.
+- **Not included:** bank sync, investment/brokerage accounts, multi-device sync, scheduled backups.
 
 ## What MIDAS does
 
@@ -29,7 +39,7 @@ MIDAS is a private, local-first personal finance desktop application built with 
 
 ## Installing
 
-Download `MIDAS_<version>_x64-setup.exe` and its matching `.sha256` file from the release. Verify the hash before running it:
+There is no GitHub release yet; installers are built locally with `npm.cmd run package`. That produces `MIDAS_<version>_x64-setup.exe` and a matching `.sha256` file. Verify the hash before running it:
 
 ```powershell
 Get-FileHash .\MIDAS_<version>_x64-setup.exe -Algorithm SHA256
@@ -37,12 +47,9 @@ Get-FileHash .\MIDAS_<version>_x64-setup.exe -Algorithm SHA256
 
 Compare the output against the `.sha256` file. Run the installer - it installs per-user to `%LOCALAPPDATA%\MIDAS` (no administrator rights needed) and adds a Start Menu shortcut. Uninstall from _Settings → Apps_ (or the Start Menu shortcut's right-click menu) like any other Windows app - **uninstalling removes the application files only, never your data** (`%APPDATA%\com.breezy.midas\midas.sqlite3` is untouched; back it up first anyway if you're about to reformat the whole machine, not just uninstall one app).
 
-## Start here
+## Project docs
 
-1. Read [PROJECT_STATE.md](PROJECT_STATE.md) for current phase status.
-2. Read [docs/product/MIDAS_PRODUCT_CONTEXT_HANDOFF.md](docs/product/MIDAS_PRODUCT_CONTEXT_HANDOFF.md) for product intent.
-3. Read [docs/product/MIDAS_CLAUDE_CODE_BUILD_HANDOFF.md](docs/product/MIDAS_CLAUDE_CODE_BUILD_HANDOFF.md) for the build plan.
-4. Follow [AGENTS.md](AGENTS.md) and the standards it links.
+[PROJECT_STATE.md](PROJECT_STATE.md) tracks phase-by-phase status, and `specs/` holds the per-phase specs and evidence.
 
 ## Development
 
@@ -91,8 +98,6 @@ Security scans run separately from `verify.ps1` (both are also in `release-check
 - `specs/`: phase specs and evidence.
 - `src/`, `src-tauri/`: the application.
 
-## Origin
+## How it was built
 
-MIDAS reuses `the-forge`'s `tauri-react-windows` golden path as a read-only reference (Tauri 2 + React + TypeScript + Vite, System/Light/Dark theming, narrow production CSP, no exposed Tauri commands by default, NSIS packaging, deterministic checks). MIDAS also follows the App Foundry development methodology (the standards/gates/governance discipline behind `constitution/`, `standards/`, and `gates/`) without depending on it at runtime either. The Forge is the code/tooling side of this; App Foundry is the methodology side — MIDAS does not depend on The Forge, App Foundry, SERANA, ICARUS, Claude Code, or Codex at runtime.
-
-`origin` is configured to the private Gitea remote at `[private-git-server]`. Pushing has worked since Phase 2 (see ADR-0002 for the infrastructure issue that blocked it early on, and how it was resolved) — `origin/main` is kept in sync with local `HEAD` at the end of every phase; see `PROJECT_STATE.md` for the current commit.
+The project started from a personal Tauri + React + TypeScript + Vite template (System/Light/Dark theming, a narrow production CSP, no exposed Tauri commands by default, NSIS packaging, deterministic checks) and follows a phase/gate process documented in `constitution/`, `standards/` and `gates/`. None of that is needed at runtime.
