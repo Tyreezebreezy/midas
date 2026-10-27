@@ -18,12 +18,12 @@ All of this is demo data: one fictional checking account, three months of genera
 
 ![Overview with Safe to Spend, upcoming bills, pay cycle, goals and budget summary](docs/screenshots/overview.png)
 
-| Budgets | Forecast |
-| --- | --- |
+| Budgets                                                                  | Forecast                                                                              |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
 | ![Budgets with pace tracking per category](docs/screenshots/budgets.png) | ![30-day cash forecast from confirmed recurring items](docs/screenshots/forecast.png) |
 
-| Recurring | CSV import preview |
-| --- | --- |
+| Recurring                                                                 | CSV import preview                                                                  |
+| ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
 | ![Recurring items detected and confirmed](docs/screenshots/recurring.png) | ![CSV import preview before anything is saved](docs/screenshots/import-preview.png) |
 
 ## What MIDAS does
