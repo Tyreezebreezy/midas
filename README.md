@@ -9,8 +9,22 @@ I built MIDAS because I wanted one place for the numbers I actually check: what 
 - **Version:** `1.0.0-rc.2`, a release candidate. `v0.1.0` and `v1.0.0-rc.1` are tagged. There is no final 1.0 yet.
 - **Platform:** Windows only. Windows is the only platform built and tested.
 - **Screenshots:** none yet. MIDAS holds real financial data, so I only want to publish captures taken from a disposable test database, and I haven't produced those.
-- **License:** none chosen yet; all rights reserved for now.
+- **License:** the source is publicly viewable, but I haven't granted an open-source license, so all rights are reserved for now.
 - **Not included:** bank sync, investment/brokerage accounts, multi-device sync, scheduled backups.
+
+## Screenshots
+
+All of this is demo data: one fictional checking account, three months of generated transactions (imported through the real CSV wizard), a pay schedule, recurring bills confirmed from detection, and budgets from the "Suggest from spending" button.
+
+![Overview with Safe to Spend, upcoming bills, pay cycle, goals and budget summary](docs/screenshots/overview.png)
+
+| Budgets | Forecast |
+| --- | --- |
+| ![Budgets with pace tracking per category](docs/screenshots/budgets.png) | ![30-day cash forecast from confirmed recurring items](docs/screenshots/forecast.png) |
+
+| Recurring | CSV import preview |
+| --- | --- |
+| ![Recurring items detected and confirmed](docs/screenshots/recurring.png) | ![CSV import preview before anything is saved](docs/screenshots/import-preview.png) |
 
 ## What MIDAS does
 
